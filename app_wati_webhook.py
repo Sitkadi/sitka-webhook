@@ -301,9 +301,17 @@ def obter_metragem_iptu():
 def geocodificar_endereco_sp(endereco):
     """Geocodifica endereço forçando São Paulo, Brasil"""
     try:
+        # PASSO 1: Pegar apenas ate primeira virgula (remove pais/cidade anterior)
+        endereco_limpo = endereco.strip()
+        if ',' in endereco_limpo:
+            endereco_limpo = endereco_limpo.split(',')[0].strip()
+        
+        # PASSO 2: Adicionar Sao Paulo no final
+        endereco_com_sp = f"{endereco_limpo}, Sao Paulo"
+        
         url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {
-            "address": endereco,
+            "address": endereco_com_sp,
             "components": "administrative_area:SP|country:BR",
             "key": GOOGLE_API_KEY
         }
