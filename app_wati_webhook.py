@@ -7,7 +7,6 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 from urllib.parse import parse_qs, unquote
 import re
-from io import BytesIO
 
 # ============================================================================
 # CONFIGURAÇÃO
@@ -23,32 +22,6 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', 'AIzaSyB56fOrhU0MUwtFp7s7qseKzMTml0rCMjY')
-
-# ============================================================================
-# MIDDLEWARE PARA CAPTURAR BODY RAW
-# ============================================================================
-
-class RawBodyMiddleware:
-    """Middleware para capturar o body RAW antes do Flask processar"""
-    
-    def __init__(self, app):
-        self.app = app
-    
-    def __call__(self, environ, start_response):
-        # Capturar o body RAW
-        content_length = int(environ.get('CONTENT_LENGTH', 0))
-        
-        if content_length > 0:
-            body = environ['wsgi.input'].read(content_length)
-            environ['wsgi.input'] = BytesIO(body)
-            environ['RAW_BODY'] = body
-        else:
-            environ['RAW_BODY'] = b''
-        
-        return self.app(environ, start_response)
-
-# Aplicar middleware
-app.wsgi_app = RawBodyMiddleware(app.wsgi_app)
 
 # ============================================================================
 # BANCO DE DADOS LOCAL DE IPTU
@@ -78,7 +51,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "24.0"
+        "version": "25.0"
     }), 200
 
 # ============================================================================
@@ -88,110 +61,45 @@ def health():
 def extrair_endereco_do_body():
     """
     Extrai endereço do body com múltiplas estratégias
-    Usa environ['RAW_BODY'] do middleware customizado
+    Versão simplificada sem middleware complexo
     """
     
     logger.info(f"[IPTU] Content-Type: {request.content_type}")
     
-    # Obter body RAW do middleware
-    raw_body = request.environ.get('RAW_BODY', b'')
-    logger.info(f"[IPTU] Data length: {len(raw_body)}")
-    logger.info(f"[IPTU] Data (hex): {raw_body.hex()[:100]}")
-    
     endereco = None
     
-    # ========== ESTRATÉGIA 1: parse_qs com latin-1 ==========
-    try:
-        raw_str = raw_body.decode('latin-1', errors='ignore')
-        parsed = parse_qs(raw_str)
-        
-        if 'endereco' in parsed and parsed['endereco']:
-            endereco = parsed['endereco'][0].strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 1 (parse_qs latin-1): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 1 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 2: Regex form com latin-1 ==========
-    try:
-        raw_str = raw_body.decode('latin-1', errors='ignore')
-        match = re.search(r'endereco=([^&]*)', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 2 (regex form latin-1): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 2 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 3: Regex JSON com latin-1 ==========
-    try:
-        raw_str = raw_body.decode('latin-1', errors='ignore')
-        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 3 (regex JSON latin-1): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 3 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 4: CP1252 decode ==========
-    try:
-        raw_str = raw_body.decode('cp1252', errors='ignore')
-        
-        # Regex form
-        match = re.search(r'endereco=([^&]*)', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 4a (regex form cp1252): {endereco[:50]}")
-                return endereco
-        
-        # Regex JSON
-        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 4b (regex JSON cp1252): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 4 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 5: UTF-8 com errors='replace' ==========
-    try:
-        raw_str = raw_body.decode('utf-8', errors='replace')
-        
-        # Regex form
-        match = re.search(r'endereco=([^&]*)', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 5a (regex form utf-8): {endereco[:50]}")
-                return endereco
-        
-        # Regex JSON
-        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 5b (regex JSON utf-8): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 5 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 6: get_json() com force=True ==========
+    # ========== ESTRATÉGIA 1: JSON direto ==========
     try:
         data = request.get_json(force=True, silent=True)
         if data and isinstance(data, dict) and 'endereco' in data:
             endereco = str(data.get('endereco', '')).strip()
             if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 6 (get_json force): {endereco[:50]}")
+                logger.info(f"[IPTU] ✅ Strategy 1 (JSON): {endereco[:50]}")
                 return endereco
     except Exception as e:
-        logger.warning(f"[IPTU] Strategy 6 erro: {str(e)}")
+        logger.warning(f"[IPTU] Strategy 1 erro: {str(e)}")
     
+    # ========== ESTRATÉGIA 2: Form data ==========
+    try:
+        if request.form:
+            endereco = request.form.get('endereco', '').strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 2 (Form): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 2 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 3: Query params ==========
+    try:
+        if request.args:
+            endereco = request.args.get('endereco', '').strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 3 (Query): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 3 erro: {str(e)}")
+    
+    logger.warning(f"[IPTU] Nenhuma estratégia funcionou")
     return None
 
 
@@ -309,7 +217,7 @@ def analise_imagemdesatelite():
     Endpoint para enviar imagem de satélite via WATI
     """
     try:
-        data = request.json or {}
+        data = request.get_json(force=True, silent=True) or {}
         telefone = data.get('telefone', '').strip()
         endereco = data.get('endereco', '').strip()
         
@@ -318,12 +226,32 @@ def analise_imagemdesatelite():
         if not telefone or not endereco:
             return jsonify({"sucesso": False, "erro": "Telefone ou endereço não fornecido"}), 400
         
-        return jsonify({
-            "sucesso": True,
-            "mensagem": "Imagem de satélite enviada com sucesso",
-            "telefone": telefone,
-            "endereco": endereco
-        }), 200
+        # Gerar URL da imagem de satélite do Google Maps
+        # Formato: https://maps.googleapis.com/maps/api/staticmap?center=ADDRESS&zoom=18&size=600x400&maptype=satellite&key=API_KEY
+        
+        try:
+            # Substituir espaços por + para a URL
+            endereco_encoded = endereco.replace(' ', '+')
+            
+            satellite_url = f"https://maps.googleapis.com/maps/api/staticmap?center={endereco_encoded}&zoom=18&size=600x400&maptype=satellite&key={GOOGLE_API_KEY}"
+            
+            logger.info(f"[SATELLITE] URL gerada: {satellite_url[:80]}...")
+            
+            # Retornar a URL da imagem e mensagem
+            return jsonify({
+                "sucesso": True,
+                "mensagem": "Imagem de satélite gerada com sucesso",
+                "imagemdesatelite_url": satellite_url,
+                "telefone": telefone,
+                "endereco": endereco
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"[SATELLITE] Erro ao gerar URL: {str(e)}")
+            return jsonify({
+                "sucesso": False,
+                "erro": f"Erro ao gerar imagem: {str(e)}"
+            }), 500
         
     except Exception as e:
         logger.error(f"[SATELLITE] Erro: {str(e)}")
