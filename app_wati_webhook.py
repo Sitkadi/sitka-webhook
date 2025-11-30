@@ -46,8 +46,97 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "21.0"
+        "version": "22.0"
     }), 200
+
+# ============================================================================
+# FUNÇÕES DE PARSING
+# ============================================================================
+
+def extrair_endereco_do_body():
+    """
+    Extrai endereço do body com múltiplas estratégias
+    Estratégia: latin-1 + URL decode + regex
+    """
+    
+    logger.info(f"[IPTU] Content-Type: {request.content_type}")
+    logger.info(f"[IPTU] Data length: {len(request.data)}")
+    
+    endereco = None
+    
+    # ========== ESTRATÉGIA 1: JSON com get_json() ==========
+    try:
+        data = request.get_json(force=True, silent=True)
+        if data and isinstance(data, dict) and 'endereco' in data:
+            endereco = str(data.get('endereco', '')).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 1 (get_json): {endereco[:50]}")
+                return endereco
+    except:
+        pass
+    
+    # ========== ESTRATÉGIA 2: Form ==========
+    try:
+        endereco = str(request.form.get('endereco', '')).strip()
+        if endereco:
+            logger.info(f"[IPTU] ✅ Strategy 2 (form): {endereco[:50]}")
+            return endereco
+    except:
+        pass
+    
+    # ========== ESTRATÉGIA 3: Latin-1 + URL Decode + Regex ==========
+    try:
+        # Decodificar com latin-1 (aceita QUALQUER byte)
+        raw_str = request.data.decode('latin-1', errors='ignore')
+        logger.info(f"[IPTU] Raw (latin-1): {raw_str[:100]}")
+        
+        # Fazer URL decode
+        raw_str_decoded = unquote(raw_str)
+        logger.info(f"[IPTU] After unquote: {raw_str_decoded[:100]}")
+        
+        # Extrair com regex JSON
+        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str_decoded)
+        if match:
+            endereco = match.group(1).strip()
+            logger.info(f"[IPTU] ✅ Strategy 3a (regex JSON): {endereco[:50]}")
+            return endereco
+        
+        # Extrair com regex form
+        match = re.search(r'endereco=([^&]*)', raw_str_decoded)
+        if match:
+            endereco = match.group(1).strip()
+            logger.info(f"[IPTU] ✅ Strategy 3b (regex form): {endereco[:50]}")
+            return endereco
+        
+        logger.warning(f"[IPTU] Strategy 3 não encontrou match")
+        
+    except Exception as e:
+        logger.error(f"[IPTU] Strategy 3 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 4: UTF-8 + Regex ==========
+    try:
+        raw_str = request.data.decode('utf-8', errors='ignore')
+        logger.info(f"[IPTU] Raw (utf-8): {raw_str[:100]}")
+        
+        # Extrair com regex JSON
+        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            logger.info(f"[IPTU] ✅ Strategy 4a (regex JSON utf-8): {endereco[:50]}")
+            return endereco
+        
+        # Extrair com regex form
+        match = re.search(r'endereco=([^&]*)', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            logger.info(f"[IPTU] ✅ Strategy 4b (regex form utf-8): {endereco[:50]}")
+            return endereco
+        
+    except Exception as e:
+        logger.error(f"[IPTU] Strategy 4 erro: {str(e)}")
+    
+    return None
+
 
 # ============================================================================
 # ENDPOINT IPTU
@@ -57,54 +146,11 @@ def health():
 def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
-    Parsing FORÇADO sem validação
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
-        logger.info(f"[IPTU] Content-Type: {request.content_type}")
-        logger.info(f"[IPTU] Data length: {len(request.data)}")
         
-        endereco = None
-        
-        # Estratégia 1: Tentar get_json() com force=True
-        try:
-            data = request.get_json(force=True, silent=True)
-            if data and isinstance(data, dict) and 'endereco' in data:
-                endereco = str(data.get('endereco', '')).strip()
-                if endereco:
-                    logger.info(f"[IPTU] ✅ get_json: {endereco[:50]}")
-        except:
-            pass
-        
-        # Estratégia 2: Tentar form
-        if not endereco:
-            try:
-                endereco = str(request.form.get('endereco', '')).strip()
-                if endereco:
-                    logger.info(f"[IPTU] ✅ form: {endereco[:50]}")
-            except:
-                pass
-        
-        # Estratégia 3: Parsing FORÇADO do raw data
-        if not endereco:
-            try:
-                # Tentar decodificar com latin-1 (nunca falha)
-                raw_str = request.data.decode('latin-1', errors='ignore')
-                logger.info(f"[IPTU] Raw decoded: {raw_str[:100]}")
-                
-                # Extrair com regex
-                match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
-                if match:
-                    endereco = match.group(1).strip()
-                    logger.info(f"[IPTU] ✅ regex JSON: {endereco[:50]}")
-                else:
-                    # Tentar form
-                    match = re.search(r'endereco=([^&]*)', raw_str)
-                    if match:
-                        endereco = unquote(match.group(1)).strip()
-                        logger.info(f"[IPTU] ✅ regex form: {endereco[:50]}")
-            except Exception as e:
-                logger.error(f"[IPTU] Parsing falhou: {str(e)}")
+        endereco = extrair_endereco_do_body()
         
         logger.info(f"[IPTU] Endereço final: '{endereco}'")
         
