@@ -132,50 +132,57 @@ def consultar_iptu_wfs_geosampa(endereco, cidade):
     """
     
     try:
-        # Limpar endereço
-        endereco_limpo = endereco.split(',')[0].strip()  # Pega só a rua
+        # Limpar endereço - pega só a rua
+        endereco_limpo = endereco.split(',')[0].strip()
         
         # Parâmetros da requisição WFS
         params = {
             "service": "WFS",
-            "version": "2.0.0",
+            "version": "1.0.0",
             "request": "GetFeature",
-            "typeName": "IPTU",
+            "typeName": "geosampa:IPTU",
             "outputFormat": "application/json",
-            "cql_filter": f"STRMATCHES(endereco, '.*{endereco_limpo}.*')",
-            "maxfeatures": 5
+            "propertyName": "endereco,area_terreno,sql,bairro",
+            "CQL_FILTER": f"endereco ILIKE '%{endereco_limpo}%'",
+            "maxfeatures": "1"
         }
         
-        logger.info(f"[WFS] Consultando: {GEOSAMPA_WFS_URL}")
+        logger.info(f"[WFS] Consultando Geosampa: {endereco_limpo}")
         
         # Fazer requisição
         response = requests.get(
             GEOSAMPA_WFS_URL,
             params=params,
-            timeout=10
+            timeout=15
         )
         
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"[WFS] Status: 200, Features: {len(data.get('features', []))}")
-            
-            # Processar features
-            if data.get('features') and len(data['features']) > 0:
-                feature = data['features'][0]
-                properties = feature.get('properties', {})
-                
-                # Extrair metragem
-                metragem = properties.get('area_terreno') or properties.get('areaterreno')
-                
-                if metragem:
-                    return {
-                        "metragem": float(metragem),
-                        "endereco": properties.get('endereco', ''),
-                        "sql": properties.get('sql', ''),
-                        "bairro": properties.get('bairro', '')
-                    }
+        logger.info(f"[WFS] Status: {response.status_code}")
         
-        logger.warning(f"[WFS] Nenhuma feature encontrada")
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                logger.info(f"[WFS] Features encontradas: {len(data.get('features', []))}")
+                
+                # Processar features
+                if data.get('features') and len(data['features']) > 0:
+                    feature = data['features'][0]
+                    properties = feature.get('properties', {})
+                    
+                    # Extrair metragem
+                    metragem = properties.get('area_terreno') or properties.get('areaterreno')
+                    
+                    if metragem:
+                        return {
+                            "metragem": float(metragem),
+                            "endereco": properties.get('endereco', ''),
+                            "sql": properties.get('sql', ''),
+                            "bairro": properties.get('bairro', '')
+                        }
+            except json.JSONDecodeError:
+                logger.warning(f"[WFS] Resposta não é JSON válido")
+                return None
+        
+        logger.warning(f"[WFS] Nenhuma feature encontrada ou erro {response.status_code}")
         return None
         
     except requests.exceptions.Timeout:
