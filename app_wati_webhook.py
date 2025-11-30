@@ -240,7 +240,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "44.0"
+        "version": "46.0"
     }), 200
 
 
@@ -442,7 +442,7 @@ def analise_imagemdesatelite():
 # ============================================================================
 
 if __name__ == '__main__':
-    logger.info("[MAIN] SITKA Webhook v44.0 iniciado")
+    logger.info("[MAIN] SITKA Webhook v46.0 iniciado")
     logger.info(f"[MAIN] {len(IPTU_DATABASE)} endereços cadastrados no banco local")
     
     port = int(os.getenv('PORT', 10000))
