@@ -1,12 +1,12 @@
 """
-SITKA Webhook - Com integração de IPTU via WFS Geosampa
+SITKA Webhook - Com integração de IPTU via BigQuery
 Autor: Manus AI
-Data: 29 de Novembro de 2025
+Data: 30 de Novembro de 2025
 
 Funcionalidades:
 - Análise de imagem de satélite
 - Consulta de zoneamento
-- Obtenção automática de metragem via IPTU (WFS Geosampa)
+- Obtenção automática de metragem via IPTU (BigQuery)
 - Integração com WATI
 """
 
@@ -32,9 +32,11 @@ WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 PORT = int(os.getenv('PORT', 10000))
 
 # URLs das APIs
-GEOSAMPA_WFS_URL = "https://geosampa.prefeitura.sp.gov.br/geoserver/wfs"
 GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 GOOGLE_SATELLITE_API_URL = "https://maps.googleapis.com/maps/api/staticmap"
+
+# BigQuery - Usar API REST (sem credenciais de serviço)
+BIGQUERY_API_URL = "https://www.googleapis.com/bigquery/v2/projects/basedosdados/datasets/sp_prefeitura_iptu/tables/iptu/data"
 
 # ============================================================================
 # HEALTH CHECK
@@ -47,18 +49,18 @@ def health():
         "service": "SITKA Webhook",
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
-        "version": "2.0"
+        "version": "3.0"
     }), 200
 
 
 # ============================================================================
-# OBTER METRAGEM VIA IPTU (WFS GEOSAMPA)
+# OBTER METRAGEM VIA IPTU (BIGQUERY)
 # ============================================================================
 
 @app.route('/obter-metragem-iptu', methods=['POST'])
 def obter_metragem_iptu():
     """
-    Obtém a metragem do terreno via IPTU do Geosampa usando WFS
+    Obtém a metragem do terreno via IPTU usando BigQuery
     
     Body esperado:
     {
@@ -69,7 +71,7 @@ def obter_metragem_iptu():
     Retorna:
     {
         "metragem": 2500,
-        "fonte": "iptu_geosampa",
+        "fonte": "iptu_bigquery",
         "endereco": "...",
         "sql": "...",
         "sucesso": true
@@ -91,14 +93,14 @@ def obter_metragem_iptu():
                 "sucesso": False
             }), 400
         
-        # Consultar WFS Geosampa
-        resultado = consultar_iptu_wfs_geosampa(endereco, cidade)
+        # Tentar consultar BigQuery
+        resultado = consultar_iptu_bigquery(endereco, cidade)
         
         if resultado and resultado.get('metragem'):
             logger.info(f"[IPTU] ✅ Metragem encontrada: {resultado['metragem']} m²")
             return jsonify({
                 "metragem": resultado['metragem'],
-                "fonte": "iptu_geosampa",
+                "fonte": "iptu_bigquery",
                 "endereco": resultado.get('endereco'),
                 "sql": resultado.get('sql'),
                 "bairro": resultado.get('bairro'),
@@ -124,75 +126,84 @@ def obter_metragem_iptu():
         }), 500
 
 
-def consultar_iptu_wfs_geosampa(endereco, cidade):
+def consultar_iptu_bigquery(endereco, cidade):
     """
-    Consulta IPTU via WFS (Web Feature Service) do Geosampa
+    Consulta IPTU via BigQuery usando API REST
     
-    Usa OGC Web Feature Service para buscar dados de IPTU
+    Usa Google BigQuery API para buscar dados de IPTU de São Paulo
     """
     
     try:
-        # Limpar endereço - pega só a rua
+        # Limpar endereço
         endereco_limpo = endereco.split(',')[0].strip()
         
-        # Parâmetros da requisição WFS
+        logger.info(f"[BigQuery] Consultando: {endereco_limpo}")
+        
+        # Parâmetros da requisição BigQuery
         params = {
-            "service": "WFS",
-            "version": "1.0.0",
-            "request": "GetFeature",
-            "typeName": "geosampa:IPTU",
-            "outputFormat": "application/json",
-            "propertyName": "endereco,area_terreno,sql,bairro",
-            "CQL_FILTER": f"endereco ILIKE '%{endereco_limpo}%'",
-            "maxfeatures": "1"
+            "key": GOOGLE_API_KEY,
+            "maxResults": 1,
+            "formatOptions.useInt64Timestamp": "false"
         }
         
-        logger.info(f"[WFS] Consultando Geosampa: {endereco_limpo}")
+        # Query SQL para BigQuery
+        query_sql = f"""
+        SELECT 
+            area_terreno,
+            endereco,
+            sql,
+            bairro
+        FROM `basedosdados.sp_prefeitura_iptu.iptu`
+        WHERE 
+            LOWER(endereco) LIKE LOWER('%{endereco_limpo}%')
+            AND ano = (SELECT MAX(ano) FROM `basedosdados.sp_prefeitura_iptu.iptu`)
+        LIMIT 1
+        """
+        
+        logger.info(f"[BigQuery] Query: {query_sql[:100]}...")
         
         # Fazer requisição
         response = requests.get(
-            GEOSAMPA_WFS_URL,
+            BIGQUERY_API_URL,
             params=params,
             timeout=15
         )
         
-        logger.info(f"[WFS] Status: {response.status_code}")
+        logger.info(f"[BigQuery] Status: {response.status_code}")
         
         if response.status_code == 200:
-            try:
-                data = response.json()
-                logger.info(f"[WFS] Features encontradas: {len(data.get('features', []))}")
+            data = response.json()
+            logger.info(f"[BigQuery] Rows: {len(data.get('rows', []))}")
+            
+            # Processar resultado
+            if data.get('rows') and len(data['rows']) > 0:
+                row = data['rows'][0]['f']
                 
-                # Processar features
-                if data.get('features') and len(data['features']) > 0:
-                    feature = data['features'][0]
-                    properties = feature.get('properties', {})
-                    
-                    # Extrair metragem
-                    metragem = properties.get('area_terreno') or properties.get('areaterreno')
-                    
-                    if metragem:
-                        return {
-                            "metragem": float(metragem),
-                            "endereco": properties.get('endereco', ''),
-                            "sql": properties.get('sql', ''),
-                            "bairro": properties.get('bairro', '')
-                        }
-            except json.JSONDecodeError:
-                logger.warning(f"[WFS] Resposta não é JSON válido")
-                return None
+                # Extrair campos
+                metragem = row[0]['v'] if row[0].get('v') else None
+                endereco_retorno = row[1]['v'] if row[1].get('v') else ''
+                sql_imovel = row[2]['v'] if row[2].get('v') else ''
+                bairro = row[3]['v'] if row[3].get('v') else ''
+                
+                if metragem:
+                    return {
+                        "metragem": float(metragem),
+                        "endereco": endereco_retorno,
+                        "sql": sql_imovel,
+                        "bairro": bairro
+                    }
         
-        logger.warning(f"[WFS] Nenhuma feature encontrada ou erro {response.status_code}")
+        logger.warning(f"[BigQuery] Nenhuma linha encontrada")
         return None
         
     except requests.exceptions.Timeout:
-        logger.error("[WFS] Timeout na requisição")
+        logger.error("[BigQuery] Timeout na requisição")
         return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"[WFS] Erro na requisição: {str(e)}")
+        logger.error(f"[BigQuery] Erro na requisição: {str(e)}")
         return None
     except Exception as e:
-        logger.error(f"[WFS] Erro ao processar resposta: {str(e)}")
+        logger.error(f"[BigQuery] Erro ao processar resposta: {str(e)}")
         return None
 
 
@@ -348,52 +359,6 @@ def enviar_imagem_wati(telefone, url_imagem, endereco):
 
 
 # ============================================================================
-# ANÁLISE DE ZONEAMENTO
-# ============================================================================
-
-@app.route('/zoneamento-endereco', methods=['POST'])
-def zoneamento_endereco():
-    """
-    Obtém informações de zoneamento do endereço
-    
-    Body esperado:
-    {
-        "endereco": "Avenida Paulista, 1000, São Paulo, SP"
-    }
-    """
-    
-    try:
-        data = request.json
-        endereco = data.get('endereco', '').strip()
-        
-        logger.info(f"[ZONEAMENTO] Consultando: {endereco}")
-        
-        if not endereco:
-            return jsonify({
-                "success": False,
-                "error": "Endereço é obrigatório"
-            }), 400
-        
-        # Aqui você pode integrar com API de zoneamento real
-        # Por enquanto, retorna dados de exemplo
-        
-        return jsonify({
-            "success": True,
-            "endereco_formatado": endereco,
-            "zoneamento": "ZC",
-            "zoneamento_texto": "Zona Comercial",
-            "info": "Integração com API de zoneamento"
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"[ZONEAMENTO] Erro: {str(e)}")
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        }), 500
-
-
-# ============================================================================
 # ENDPOINT DE TESTE
 # ============================================================================
 
@@ -406,8 +371,7 @@ def test_endpoint():
         "endpoints": {
             "health": "/health",
             "iptu": "/obter-metragem-iptu",
-            "satelite": "/analise-imagemdesatelite",
-            "zoneamento": "/zoneamento-endereco"
+            "satelite": "/analise-imagemdesatelite"
         }
     }), 200
 
@@ -436,7 +400,6 @@ if __name__ == '__main__':
     logger.info(f"   - GET  /health")
     logger.info(f"   - POST /obter-metragem-iptu")
     logger.info(f"   - POST /analise-imagemdesatelite")
-    logger.info(f"   - POST /zoneamento-endereco")
     logger.info(f"   - GET  /analise-imagemdesatelite-test")
     
     app.run(host='0.0.0.0', port=PORT, debug=False)
