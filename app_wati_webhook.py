@@ -29,6 +29,57 @@ IPTU_DATABASE = {
     "avenida paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     "av paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     "av. paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "av paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "av. paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    
+    # Rua Oscar Freire (500)
+    "rua oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "r oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "r. oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "r oscar freire, 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "r. oscar freire, 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    
+    # Avenida Brasil (2000)
+    "avenida brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "av brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "av. brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "av brasil, 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "av. brasil, 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    
+    # Rua Augusta (800)
+    "rua augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "r augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "r. augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "r augusta, 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "r. augusta, 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    
+    # Avenida Imigrantes (3000)
+    "avenida imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "av imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "av. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "av imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "av. imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "rod imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "rod. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "rod imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "rod. imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    
+    # Rua 25 de Março (1500)
+    "rua 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "rua vinte e cinco de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "r 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "r. 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "r 25 de marco, 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "r. 25 de marco, 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+},
+    "av paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "av. paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     "paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     
     # Rua Oscar Freire (500)
@@ -146,8 +197,14 @@ def consultar_banco_local(endereco):
     try:
         endereco_limpo = endereco.lower().strip()
         
-        # Remover CEP e país
+        # Remover CEP e país (tudo após primeira vírgula)
         endereco_limpo = endereco_limpo.split(',')[0].strip()
+        
+        # Remover pontos (Av. → Av, R. → R, Rod. → Rod)
+        endereco_limpo = endereco_limpo.replace('.', '')
+        
+        # Normalizar espaços múltiplos
+        endereco_limpo = ' '.join(endereco_limpo.split())
         
         logger.info(f"[DB] Consultando: {endereco_limpo}")
         
