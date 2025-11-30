@@ -132,25 +132,34 @@ def consultar_banco_local(endereco):
     Processo:
     1. Converte para minúsculas
     2. Remove pontos (Av. → Av, R. → R)
-    3. Extrai apenas a rua e número (antes da primeira vírgula)
+    3. Extrai rua + número (antes de " - ")
     4. Busca exata ou fuzzy no banco
     """
     try:
-        endereco_limpo = endereco.lower().strip()
+        if not endereco or not isinstance(endereco, str):
+            logger.warning(f"[DB] Endereço inválido: {endereco}")
+            return None
         
-        # Remover pontos (Av. → Av, R. → R, Rod. → Rod)
-        endereco_limpo = endereco_limpo.replace('.', '')
+        endereco_limpo = endereco.lower().strip()
         
         # Extrair apenas rua + número (tudo antes de " - bairro")
         # Google retorna: "Av. Paulista, 1000 - Bela Vista, ..."
         # Queremos: "Av. Paulista, 1000"
         if ' - ' in endereco_limpo:
             endereco_limpo = endereco_limpo.split(' - ')[0].strip()
-        else:
+        elif ',' in endereco_limpo:
+            # Se tiver vírgula, pega tudo antes da primeira
             endereco_limpo = endereco_limpo.split(',')[0].strip()
+        
+        # Remover pontos (Av. → Av, R. → R, Rod. → Rod)
+        endereco_limpo = endereco_limpo.replace('.', '')
         
         # Normalizar espaços múltiplos
         endereco_limpo = ' '.join(endereco_limpo.split())
+        
+        if not endereco_limpo:
+            logger.warning(f"[DB] Endereço vazio após normalização")
+            return None
         
         logger.info(f"[DB] Entrada normalizada: {endereco_limpo}")
         
@@ -171,7 +180,7 @@ def consultar_banco_local(endereco):
         return None
         
     except Exception as e:
-        logger.error(f"[DB] Erro: {str(e)}")
+        logger.error(f"[DB] Erro ao consultar: {str(e)}")
         return None
 
 
