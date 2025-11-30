@@ -141,9 +141,13 @@ def consultar_banco_local(endereco):
         # Remover pontos (Av. → Av, R. → R, Rod. → Rod)
         endereco_limpo = endereco_limpo.replace('.', '')
         
-        # Extrair apenas rua + número (tudo antes de "bela vista", "jardim paulista", etc)
-        # Pega tudo antes da primeira vírgula
-        endereco_limpo = endereco_limpo.split(',')[0].strip()
+        # Extrair apenas rua + número (tudo antes de " - bairro")
+        # Google retorna: "Av. Paulista, 1000 - Bela Vista, ..."
+        # Queremos: "Av. Paulista, 1000"
+        if ' - ' in endereco_limpo:
+            endereco_limpo = endereco_limpo.split(' - ')[0].strip()
+        else:
+            endereco_limpo = endereco_limpo.split(',')[0].strip()
         
         # Normalizar espaços múltiplos
         endereco_limpo = ' '.join(endereco_limpo.split())
