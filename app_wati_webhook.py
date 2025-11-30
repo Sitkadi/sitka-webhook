@@ -135,6 +135,32 @@ def obter_metragem_iptu():
 # ANÁLISE DE IMAGEM DE SATÉLITE
 # ============================================================================
 
+def geocodificar_endereco_sp(endereco):
+    """Geocodifica endereço forçando São Paulo, Brasil"""
+    try:
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": endereco,
+            "components": "administrative_area:SP|country:BR",
+            "key": GOOGLE_API_KEY
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        if data['results']:
+            result = data['results'][0]
+            endereco_completo = result['formatted_address']
+            logger.info(f"[GEOCODE] ✅ {endereco} → {endereco_completo}")
+            return endereco_completo
+        else:
+            logger.warning(f"[GEOCODE] ⚠️ Não encontrado: {endereco}")
+            return f"{endereco}, São Paulo, Brasil"
+    except Exception as e:
+        logger.error(f"[GEOCODE] Erro: {str(e)}")
+        return f"{endereco}, São Paulo, Brasil"
+
+
 def enviar_imagem_wati(telefone, endereco):
     """Envia imagem de satélite para o WhatsApp via WATI API"""
     try:
@@ -144,8 +170,8 @@ def enviar_imagem_wati(telefone, endereco):
         
         logger.info(f"[SATELLITE] Obtendo imagem para {endereco}")
         
-        # Forçar São Paulo, Brasil na busca com bounding box
-        endereco_completo = f"{endereco}, São Paulo, Brasil"
+        # Geocodificar com componentes SP|BR
+        endereco_completo = geocodificar_endereco_sp(endereco)
         
         # Bounding box de São Paulo (lat/lng)
         # SW: -23.8245, -46.8134 | NE: -23.4273, -46.3569
