@@ -156,6 +156,7 @@ def validar_e_geocodificar_endereco_sp(endereco_usuario):
     """
     try:
         # PASSO 1: Pegar apenas ate primeira virgula (remove pais/cidade anterior)
+        # Solucao: extrai apenas a rua e numero, ignora pais/cidade anterior
         endereco_limpo = endereco_usuario.strip()
         if ',' in endereco_limpo:
             endereco_limpo = endereco_limpo.split(',')[0].strip()
