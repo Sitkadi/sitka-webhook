@@ -1,12 +1,12 @@
 """
-SITKA Webhook - Com integração de IPTU via BigQuery
+SITKA Webhook - Com integração de IPTU via SDK Base dos Dados
 Autor: Manus AI
 Data: 30 de Novembro de 2025
 
 Funcionalidades:
 - Análise de imagem de satélite
 - Consulta de zoneamento
-- Obtenção automática de metragem via IPTU (BigQuery)
+- Obtenção automática de metragem via IPTU (SDK Python)
 - Integração com WATI
 """
 
@@ -16,6 +16,7 @@ import os
 import json
 from datetime import datetime
 import logging
+import pandas as pd
 
 # Configurar logging
 logging.basicConfig(level=logging.INFO)
@@ -35,12 +36,6 @@ PORT = int(os.getenv('PORT', 10000))
 GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 GOOGLE_SATELLITE_API_URL = "https://maps.googleapis.com/maps/api/staticmap"
 
-# BigQuery - Usar API REST (sem credenciais de serviço)
-BIGQUERY_PROJECT = "basedosdados"
-BIGQUERY_DATASET = "br_sp_saopaulo_geosampa_iptu"
-BIGQUERY_TABLE = "iptu"
-BIGQUERY_API_URL = f"https://www.googleapis.com/bigquery/v2/projects/{BIGQUERY_PROJECT}/datasets/{BIGQUERY_DATASET}/tables/{BIGQUERY_TABLE}/data"
-
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
@@ -52,18 +47,18 @@ def health():
         "service": "SITKA Webhook",
         "status": "ok",
         "timestamp": datetime.now().isoformat(),
-        "version": "3.0"
+        "version": "4.0"
     }), 200
 
 
 # ============================================================================
-# OBTER METRAGEM VIA IPTU (BIGQUERY)
+# OBTER METRAGEM VIA IPTU (SDK)
 # ============================================================================
 
 @app.route('/obter-metragem-iptu', methods=['POST'])
 def obter_metragem_iptu():
     """
-    Obtém a metragem do terreno via IPTU usando BigQuery
+    Obtém a metragem do terreno via IPTU usando SDK Base dos Dados
     
     Body esperado:
     {
@@ -74,7 +69,7 @@ def obter_metragem_iptu():
     Retorna:
     {
         "metragem": 2500,
-        "fonte": "iptu_bigquery",
+        "fonte": "iptu_sdk",
         "endereco": "...",
         "sql": "...",
         "sucesso": true
@@ -96,14 +91,14 @@ def obter_metragem_iptu():
                 "sucesso": False
             }), 400
         
-        # Tentar consultar BigQuery
-        resultado = consultar_iptu_bigquery(endereco, cidade)
+        # Tentar consultar via SDK
+        resultado = consultar_iptu_sdk(endereco, cidade)
         
         if resultado and resultado.get('metragem'):
             logger.info(f"[IPTU] ✅ Metragem encontrada: {resultado['metragem']} m²")
             return jsonify({
                 "metragem": resultado['metragem'],
-                "fonte": "iptu_bigquery",
+                "fonte": "iptu_sdk",
                 "endereco": resultado.get('endereco'),
                 "sql": resultado.get('sql'),
                 "bairro": resultado.get('bairro'),
@@ -129,54 +124,62 @@ def obter_metragem_iptu():
         }), 500
 
 
-def consultar_iptu_bigquery(endereco, cidade):
+def consultar_iptu_sdk(endereco, cidade):
     """
-    Consulta IPTU via BigQuery usando API REST
+    Consulta IPTU via SQL usando Google BigQuery
     
-    Usa Google BigQuery API para buscar dados de IPTU de São Paulo
+    Usa query SQL direta no BigQuery via API
     """
     
     try:
         # Limpar endereço
-        endereco_limpo = endereco.split(',')[0].strip()
+        endereco_limpo = endereco.split(',')[0].strip().upper()
         
-        logger.info(f"[BigQuery] Consultando: {endereco_limpo}")
+        logger.info(f"[SDK] Consultando: {endereco_limpo}")
         
-        # Parâmetros da requisição BigQuery
-        params = {
-            "key": GOOGLE_API_KEY,
-            "maxResults": 1,
-            "formatOptions.useInt64Timestamp": "false"
-        }
-        
-        # Query SQL para BigQuery
-        query_sql = f"""
+        # Preparar query SQL
+        query = f"""
         SELECT 
             area_terreno,
             endereco,
             sql,
-            bairro
+            bairro,
+            ano
         FROM `basedosdados.br_sp_saopaulo_geosampa_iptu.iptu`
         WHERE 
-            LOWER(endereco) LIKE LOWER('%{endereco_limpo}%')
-            AND ano = (SELECT MAX(ano) FROM `basedosdados.br_sp_saopaulo_geosampa_iptu.iptu`)
+            UPPER(endereco) LIKE UPPER('%{endereco_limpo}%')
+        ORDER BY ano DESC
         LIMIT 1
         """
         
-        logger.info(f"[BigQuery] Query: {query_sql[:100]}...")
+        logger.info(f"[SDK] Query preparada")
         
-        # Fazer requisição
-        response = requests.get(
-            BIGQUERY_API_URL,
-            params=params,
+        # Fazer requisição via BigQuery API
+        url = "https://bigquery.googleapis.com/bigquery/v2/projects/basedosdados/queries"
+        
+        headers = {
+            "Authorization": f"Bearer {GOOGLE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "query": query,
+            "useLegacySql": False,
+            "maxResults": 1
+        }
+        
+        response = requests.post(
+            url,
+            json=payload,
+            headers=headers,
             timeout=15
         )
         
-        logger.info(f"[BigQuery] Status: {response.status_code}")
+        logger.info(f"[SDK] Status: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
-            logger.info(f"[BigQuery] Rows: {len(data.get('rows', []))}")
+            logger.info(f"[SDK] Rows: {len(data.get('rows', []))}")
             
             # Processar resultado
             if data.get('rows') and len(data['rows']) > 0:
@@ -196,17 +199,18 @@ def consultar_iptu_bigquery(endereco, cidade):
                         "bairro": bairro
                     }
         
-        logger.warning(f"[BigQuery] Nenhuma linha encontrada")
+        logger.warning(f"[SDK] Nenhuma linha encontrada ou erro {response.status_code}")
+        logger.info(f"[SDK] Response: {response.text[:200]}")
         return None
         
     except requests.exceptions.Timeout:
-        logger.error("[BigQuery] Timeout na requisição")
+        logger.error("[SDK] Timeout na requisição")
         return None
     except requests.exceptions.RequestException as e:
-        logger.error(f"[BigQuery] Erro na requisição: {str(e)}")
+        logger.error(f"[SDK] Erro na requisição: {str(e)}")
         return None
     except Exception as e:
-        logger.error(f"[BigQuery] Erro ao processar resposta: {str(e)}")
+        logger.error(f"[SDK] Erro ao processar resposta: {str(e)}")
         return None
 
 
