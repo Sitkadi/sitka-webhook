@@ -7,16 +7,48 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 from urllib.parse import parse_qs, unquote
 import re
+from io import BytesIO
 
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
 
 app = Flask(__name__)
+
+# DESABILITAR validação automática de JSON
+app.config['JSON_SORT_KEYS'] = False
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', 'AIzaSyB56fOrhU0MUwtFp7s7qseKzMTml0rCMjY')
+
+# ============================================================================
+# MIDDLEWARE PARA CAPTURAR BODY RAW
+# ============================================================================
+
+class RawBodyMiddleware:
+    """Middleware para capturar o body RAW antes do Flask processar"""
+    
+    def __init__(self, app):
+        self.app = app
+    
+    def __call__(self, environ, start_response):
+        # Capturar o body RAW
+        content_length = int(environ.get('CONTENT_LENGTH', 0))
+        
+        if content_length > 0:
+            body = environ['wsgi.input'].read(content_length)
+            environ['wsgi.input'] = BytesIO(body)
+            environ['RAW_BODY'] = body
+        else:
+            environ['RAW_BODY'] = b''
+        
+        return self.app(environ, start_response)
+
+# Aplicar middleware
+app.wsgi_app = RawBodyMiddleware(app.wsgi_app)
 
 # ============================================================================
 # BANCO DE DADOS LOCAL DE IPTU
@@ -46,7 +78,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "22.0"
+        "version": "24.0"
     }), 200
 
 # ============================================================================
@@ -56,84 +88,109 @@ def health():
 def extrair_endereco_do_body():
     """
     Extrai endereço do body com múltiplas estratégias
-    Estratégia: latin-1 + URL decode + regex
+    Usa environ['RAW_BODY'] do middleware customizado
     """
     
     logger.info(f"[IPTU] Content-Type: {request.content_type}")
-    logger.info(f"[IPTU] Data length: {len(request.data)}")
+    
+    # Obter body RAW do middleware
+    raw_body = request.environ.get('RAW_BODY', b'')
+    logger.info(f"[IPTU] Data length: {len(raw_body)}")
+    logger.info(f"[IPTU] Data (hex): {raw_body.hex()[:100]}")
     
     endereco = None
     
-    # ========== ESTRATÉGIA 1: JSON com get_json() ==========
+    # ========== ESTRATÉGIA 1: parse_qs com latin-1 ==========
+    try:
+        raw_str = raw_body.decode('latin-1', errors='ignore')
+        parsed = parse_qs(raw_str)
+        
+        if 'endereco' in parsed and parsed['endereco']:
+            endereco = parsed['endereco'][0].strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 1 (parse_qs latin-1): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 1 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 2: Regex form com latin-1 ==========
+    try:
+        raw_str = raw_body.decode('latin-1', errors='ignore')
+        match = re.search(r'endereco=([^&]*)', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 2 (regex form latin-1): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 2 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 3: Regex JSON com latin-1 ==========
+    try:
+        raw_str = raw_body.decode('latin-1', errors='ignore')
+        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 3 (regex JSON latin-1): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 3 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 4: CP1252 decode ==========
+    try:
+        raw_str = raw_body.decode('cp1252', errors='ignore')
+        
+        # Regex form
+        match = re.search(r'endereco=([^&]*)', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 4a (regex form cp1252): {endereco[:50]}")
+                return endereco
+        
+        # Regex JSON
+        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 4b (regex JSON cp1252): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 4 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 5: UTF-8 com errors='replace' ==========
+    try:
+        raw_str = raw_body.decode('utf-8', errors='replace')
+        
+        # Regex form
+        match = re.search(r'endereco=([^&]*)', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 5a (regex form utf-8): {endereco[:50]}")
+                return endereco
+        
+        # Regex JSON
+        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
+        if match:
+            endereco = match.group(1).strip()
+            if endereco:
+                logger.info(f"[IPTU] ✅ Strategy 5b (regex JSON utf-8): {endereco[:50]}")
+                return endereco
+    except Exception as e:
+        logger.warning(f"[IPTU] Strategy 5 erro: {str(e)}")
+    
+    # ========== ESTRATÉGIA 6: get_json() com force=True ==========
     try:
         data = request.get_json(force=True, silent=True)
         if data and isinstance(data, dict) and 'endereco' in data:
             endereco = str(data.get('endereco', '')).strip()
             if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 1 (get_json): {endereco[:50]}")
+                logger.info(f"[IPTU] ✅ Strategy 6 (get_json force): {endereco[:50]}")
                 return endereco
-    except:
-        pass
-    
-    # ========== ESTRATÉGIA 2: Form ==========
-    try:
-        endereco = str(request.form.get('endereco', '')).strip()
-        if endereco:
-            logger.info(f"[IPTU] ✅ Strategy 2 (form): {endereco[:50]}")
-            return endereco
-    except:
-        pass
-    
-    # ========== ESTRATÉGIA 3: Latin-1 + URL Decode + Regex ==========
-    try:
-        # Decodificar com latin-1 (aceita QUALQUER byte)
-        raw_str = request.data.decode('latin-1', errors='ignore')
-        logger.info(f"[IPTU] Raw (latin-1): {raw_str[:100]}")
-        
-        # Fazer URL decode
-        raw_str_decoded = unquote(raw_str)
-        logger.info(f"[IPTU] After unquote: {raw_str_decoded[:100]}")
-        
-        # Extrair com regex JSON
-        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str_decoded)
-        if match:
-            endereco = match.group(1).strip()
-            logger.info(f"[IPTU] ✅ Strategy 3a (regex JSON): {endereco[:50]}")
-            return endereco
-        
-        # Extrair com regex form
-        match = re.search(r'endereco=([^&]*)', raw_str_decoded)
-        if match:
-            endereco = match.group(1).strip()
-            logger.info(f"[IPTU] ✅ Strategy 3b (regex form): {endereco[:50]}")
-            return endereco
-        
-        logger.warning(f"[IPTU] Strategy 3 não encontrou match")
-        
     except Exception as e:
-        logger.error(f"[IPTU] Strategy 3 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 4: UTF-8 + Regex ==========
-    try:
-        raw_str = request.data.decode('utf-8', errors='ignore')
-        logger.info(f"[IPTU] Raw (utf-8): {raw_str[:100]}")
-        
-        # Extrair com regex JSON
-        match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            logger.info(f"[IPTU] ✅ Strategy 4a (regex JSON utf-8): {endereco[:50]}")
-            return endereco
-        
-        # Extrair com regex form
-        match = re.search(r'endereco=([^&]*)', raw_str)
-        if match:
-            endereco = match.group(1).strip()
-            logger.info(f"[IPTU] ✅ Strategy 4b (regex form utf-8): {endereco[:50]}")
-            return endereco
-        
-    except Exception as e:
-        logger.error(f"[IPTU] Strategy 4 erro: {str(e)}")
+        logger.warning(f"[IPTU] Strategy 6 erro: {str(e)}")
     
     return None
 
