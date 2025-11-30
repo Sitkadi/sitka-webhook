@@ -1,7 +1,7 @@
 """
-SITKA Webhook v10.0 - FINAL
-Banco de dados local com múltiplos formatos
-Aceita: Avenida, Av., Av, Rua, R., R, Rod., Rod
+SITKA Webhook v11.0 - FINAL
+Banco de dados com chaves NORMALIZADAS (sem pontos)
+A função remove pontos do endereço de entrada e busca no banco
 """
 
 from flask import Flask, request, jsonify
@@ -23,97 +23,33 @@ WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '')
 WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 PORT = int(os.getenv('PORT', 10000))
 
-# Banco de dados com múltiplos formatos (Google Maps + usuário)
+# Banco de dados NORMALIZADO (sem pontos)
+# Chaves: sempre minúsculas, sem pontos, com vírgula antes do número
 IPTU_DATABASE = {
     # Avenida Paulista (1000)
-    "avenida paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "av paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "av. paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "avenida paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     "av paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "av. paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     
     # Rua Oscar Freire (500)
-    "rua oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "r oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "r. oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "rua oscar freire, 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
     "r oscar freire, 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "r. oscar freire, 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
     
     # Avenida Brasil (2000)
-    "avenida brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "av brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "av. brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "avenida brasil, 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
     "av brasil, 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "av. brasil, 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
     
     # Rua Augusta (800)
-    "rua augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "r augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "r. augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "rua augusta, 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
     "r augusta, 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "r. augusta, 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
     
     # Avenida Imigrantes (3000)
-    "avenida imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "av imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "av. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "avenida imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
     "av imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "av. imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "rod imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "rod. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
     "rod imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "rod. imigrantes, 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
     
     # Rua 25 de Março (1500)
-    "rua 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "rua vinte e cinco de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "r 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "r. 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "rua 25 de marco, 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
     "r 25 de marco, 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "r. 25 de marco, 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-},
-    "av paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "av. paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    
-    # Rua Oscar Freire (500)
-    "rua oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "r oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "r. oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    
-    # Avenida Brasil (2000)
-    "avenida brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "av brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "av. brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    
-    # Rua Augusta (800)
-    "rua augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "r augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "r. augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    
-    # Avenida Imigrantes (3000)
-    "avenida imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "av imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "av. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "rod imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "rod. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    
-    # Rua 25 de Março (1500)
-    "rua 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "rua vinte e cinco de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "r 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "r. 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
 }
 
 # ============================================================================
@@ -125,12 +61,12 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "10.0"
+        "version": "11.0"
     }), 200
 
 
 # ============================================================================
-# OBTER METRAGEM - VERSÃO 10.0
+# OBTER METRAGEM - VERSÃO 11.0
 # ============================================================================
 
 @app.route('/obter-metragem-iptu', methods=['POST'])
@@ -192,21 +128,27 @@ def obter_metragem_iptu():
 def consultar_banco_local(endereco):
     """
     Consulta banco de dados local com busca fuzzy
-    Extrai número e nome da rua do endereço formatado do Google Maps
+    
+    Processo:
+    1. Converte para minúsculas
+    2. Remove pontos (Av. → Av, R. → R)
+    3. Extrai apenas a rua e número (antes da primeira vírgula)
+    4. Busca exata ou fuzzy no banco
     """
     try:
         endereco_limpo = endereco.lower().strip()
         
-        # Remover CEP e país (tudo após primeira vírgula)
-        endereco_limpo = endereco_limpo.split(',')[0].strip()
-        
         # Remover pontos (Av. → Av, R. → R, Rod. → Rod)
         endereco_limpo = endereco_limpo.replace('.', '')
+        
+        # Extrair apenas rua + número (tudo antes de "bela vista", "jardim paulista", etc)
+        # Pega tudo antes da primeira vírgula
+        endereco_limpo = endereco_limpo.split(',')[0].strip()
         
         # Normalizar espaços múltiplos
         endereco_limpo = ' '.join(endereco_limpo.split())
         
-        logger.info(f"[DB] Consultando: {endereco_limpo}")
+        logger.info(f"[DB] Entrada normalizada: {endereco_limpo}")
         
         # Busca exata
         if endereco_limpo in IPTU_DATABASE:
@@ -221,7 +163,7 @@ def consultar_banco_local(endereco):
             logger.info(f"[DB] ✅ Match fuzzy: {matches[0]}")
             return IPTU_DATABASE[matches[0]]
         
-        logger.warning(f"[DB] Nenhuma correspondência")
+        logger.warning(f"[DB] Nenhuma correspondência para: {endereco_limpo}")
         return None
         
     except Exception as e:
@@ -358,5 +300,5 @@ def enviar_imagem_wati(telefone, url_imagem, endereco):
 # ============================================================================
 
 if __name__ == '__main__':
-    logger.info(f"🚀 SITKA Webhook v10.0 na porta {PORT}")
+    logger.info(f"🚀 SITKA Webhook v11.0 na porta {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
