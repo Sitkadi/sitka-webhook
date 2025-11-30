@@ -1,25 +1,16 @@
 import logging
 import os
-import difflib
 import requests
 import json
+import io
 from flask import Flask, request, jsonify
 from datetime import datetime
-from urllib.parse import parse_qs, unquote
-import re
-import tempfile
-import io
-import pandas as pd
 
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
 
 app = Flask(__name__)
-
-# DESABILITAR validação automática de JSON
-app.config['JSON_SORT_KEYS'] = False
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -30,63 +21,81 @@ WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '1047617')
 WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 
 # ============================================================================
-# CARREGAMENTO DE DADOS IPTU
+# BANCO DE DADOS LOCAL DE IPTU (SEM PANDAS)
 # ============================================================================
 
-IPTU_DF = None
+# Carregado em memória na inicialização
+IPTU_DATABASE = {}
 
-def carregar_iptu_csv():
+def carregar_iptu_local():
     """
-    Carrega arquivo IPTU_2025_OTIMIZADO.csv em memória (uma única vez)
+    Carrega dados IPTU do CSV em um dicionário simples
+    Sem usar pandas - apenas leitura de arquivo
     """
-    global IPTU_DF
+    global IPTU_DATABASE
     
     try:
         iptu_file = '/app/IPTU_2025_OTIMIZADO.csv'
         
-        # Verificar se arquivo existe
         if not os.path.exists(iptu_file):
-            logger.warning(f"[IPTU_CSV] Arquivo não encontrado: {iptu_file}")
+            logger.warning(f"[IPTU] Arquivo não encontrado: {iptu_file}")
             return False
         
-        logger.info(f"[IPTU_CSV] Carregando arquivo...")
+        logger.info(f"[IPTU] Carregando arquivo...")
         
-        # Ler CSV com encoding latin-1
-        IPTU_DF = pd.read_csv(
-            iptu_file,
-            sep=';',
-            encoding='latin-1',
-            dtype={
-                'NUMERO DO IMOVEL': str,
-                'AREA DO TERRENO': 'float64',
-                'AREA CONSTRUIDA': 'float64'
-            }
-        )
+        count = 0
+        with open(iptu_file, 'r', encoding='latin-1') as f:
+            # Pular header
+            header = f.readline().strip().split(';')
+            
+            # Encontrar índices das colunas
+            idx_rua = header.index('NOME DE LOGRADOURO DO IMOVEL')
+            idx_numero = header.index('NUMERO DO IMOVEL')
+            idx_metragem = header.index('AREA DO TERRENO')
+            
+            # Ler linhas
+            for line in f:
+                partes = line.strip().split(';')
+                
+                if len(partes) <= max(idx_rua, idx_numero, idx_metragem):
+                    continue
+                
+                rua = partes[idx_rua].strip().upper()
+                numero = partes[idx_numero].strip()
+                metragem_str = partes[idx_metragem].strip()
+                
+                try:
+                    metragem = float(metragem_str.replace(',', '.'))
+                except:
+                    continue
+                
+                # Chave: "RUA, NUMERO"
+                chave = f"{rua}, {numero}"
+                IPTU_DATABASE[chave] = {
+                    "metragem": metragem,
+                    "rua": rua,
+                    "numero": numero
+                }
+                
+                count += 1
+                if count % 100000 == 0:
+                    logger.info(f"[IPTU] {count:,} registros carregados...")
         
-        # Limpar nomes de colunas
-        IPTU_DF.columns = [col.strip().upper() for col in IPTU_DF.columns]
-        
-        # Limpar dados
-        IPTU_DF['NOME DE LOGRADOURO DO IMOVEL'] = IPTU_DF['NOME DE LOGRADOURO DO IMOVEL'].str.strip().str.upper()
-        IPTU_DF['NUMERO DO IMOVEL'] = IPTU_DF['NUMERO DO IMOVEL'].astype(str).str.strip()
-        
-        logger.info(f"[IPTU_CSV] ✅ {len(IPTU_DF):,} linhas carregadas em {(os.path.getsize(iptu_file) / (1024**2)):.1f} MB")
+        logger.info(f"[IPTU] ✅ {count:,} registros carregados com sucesso!")
         return True
         
     except Exception as e:
-        logger.error(f"[IPTU_CSV] Erro ao carregar: {str(e)}")
+        logger.error(f"[IPTU] Erro ao carregar: {str(e)}")
         return False
 
 
-def consultar_iptu_csv(endereco):
+def consultar_iptu(endereco):
     """
-    Consulta IPTU no DataFrame carregado em memória
-    Tenta múltiplos formatos de número
+    Consulta IPTU no banco de dados local
+    Tenta múltiplos formatos
     """
-    global IPTU_DF
-    
-    if IPTU_DF is None or IPTU_DF.empty:
-        logger.warning("[IPTU_CSV] DataFrame vazio ou não carregado")
+    if not IPTU_DATABASE:
+        logger.warning("[IPTU] Banco de dados vazio")
         return None
     
     try:
@@ -97,58 +106,37 @@ def consultar_iptu_csv(endereco):
         partes = endereco_limpo.split(',')
         
         if len(partes) < 2:
-            logger.warning(f"[IPTU_CSV] Formato inválido: {endereco}")
+            logger.warning(f"[IPTU] Formato inválido: {endereco}")
             return None
         
         rua = partes[0].strip()
-        numero_raw = partes[1].strip().split()[0]  # Pega primeiro token após vírgula
+        numero_raw = partes[1].strip().split()[0]
         
-        logger.info(f"[IPTU_CSV] Buscando: Rua='{rua}', Número='{numero_raw}'")
+        logger.info(f"[IPTU] Buscando: '{rua}' {numero_raw}")
         
         # Tentar com número original
-        resultado = IPTU_DF[
-            (IPTU_DF['NOME DE LOGRADOURO DO IMOVEL'].str.contains(rua, na=False, regex=False)) &
-            (IPTU_DF['NUMERO DO IMOVEL'] == numero_raw)
-        ]
+        chave1 = f"{rua}, {numero_raw}"
+        if chave1 in IPTU_DATABASE:
+            resultado = IPTU_DATABASE[chave1]
+            logger.info(f"[IPTU] ✅ Encontrado: {resultado['metragem']} m²")
+            return resultado
         
-        # Se não encontrar, tentar com padding de zeros (00013)
-        if resultado.empty and numero_raw.isdigit():
+        # Tentar com padding de zeros
+        if numero_raw.isdigit():
             numero_padded = numero_raw.zfill(5)
-            logger.info(f"[IPTU_CSV] Tentando com padding: '{numero_padded}'")
-            resultado = IPTU_DF[
-                (IPTU_DF['NOME DE LOGRADOURO DO IMOVEL'].str.contains(rua, na=False, regex=False)) &
-                (IPTU_DF['NUMERO DO IMOVEL'] == numero_padded)
-            ]
+            chave2 = f"{rua}, {numero_padded}"
+            if chave2 in IPTU_DATABASE:
+                resultado = IPTU_DATABASE[chave2]
+                logger.info(f"[IPTU] ✅ Encontrado (com padding): {resultado['metragem']} m²")
+                return resultado
         
-        if not resultado.empty:
-            linha = resultado.iloc[0]
-            metragem = linha['AREA DO TERRENO']
-            
-            if pd.notna(metragem) and metragem > 0:
-                logger.info(f"[IPTU_CSV] ✅ Encontrado: {metragem} m²")
-                return {
-                    "metragem": float(metragem),
-                    "endereco": linha['NOME DE LOGRADOURO DO IMOVEL'],
-                    "numero": linha['NUMERO DO IMOVEL'],
-                    "bairro": linha.get('BAIRRO DO IMOVEL', '')
-                }
-        
-        logger.warning(f"[IPTU_CSV] Não encontrado: {rua}, {numero_raw}")
+        logger.warning(f"[IPTU] Não encontrado: {rua}, {numero_raw}")
         return None
         
     except Exception as e:
-        logger.error(f"[IPTU_CSV] Erro: {str(e)}")
+        logger.error(f"[IPTU] Erro: {str(e)}")
         return None
 
-
-# ============================================================================
-# BANCO DE DADOS LOCAL DE IPTU (FALLBACK)
-# ============================================================================
-
-IPTU_DATABASE = {
-    "av paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "avenida paulista, 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-}
 
 # ============================================================================
 # HEALTH CHECK
@@ -159,56 +147,10 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "32.0",
-        "iptu_loaded": IPTU_DF is not None and len(IPTU_DF) > 0
+        "version": "34.0",
+        "iptu_loaded": len(IPTU_DATABASE) > 0,
+        "iptu_count": len(IPTU_DATABASE)
     }), 200
-
-# ============================================================================
-# FUNÇÕES DE PARSING
-# ============================================================================
-
-def extrair_endereco_do_body():
-    """
-    Extrai endereço do body com múltiplas estratégias
-    """
-    
-    logger.info(f"[IPTU] Content-Type: {request.content_type}")
-    
-    endereco = None
-    
-    # ========== ESTRATÉGIA 1: JSON direto ==========
-    try:
-        data = request.get_json(force=True, silent=True)
-        if data and isinstance(data, dict) and 'endereco' in data:
-            endereco = str(data.get('endereco', '')).strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 1 (JSON): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 1 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 2: Form data ==========
-    try:
-        if request.form:
-            endereco = request.form.get('endereco', '').strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 2 (Form): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 2 erro: {str(e)}")
-    
-    # ========== ESTRATÉGIA 3: Query params ==========
-    try:
-        if request.args:
-            endereco = request.args.get('endereco', '').strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Strategy 3 (Query): {endereco[:50]}")
-                return endereco
-    except Exception as e:
-        logger.warning(f"[IPTU] Strategy 3 erro: {str(e)}")
-    
-    logger.warning(f"[IPTU] Nenhuma estratégia funcionou")
-    return None
 
 
 # ============================================================================
@@ -219,14 +161,15 @@ def extrair_endereco_do_body():
 def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
-    Usa CSV IPTU como fonte principal
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
         
-        endereco = extrair_endereco_do_body()
+        # Extrair endereço
+        data = request.get_json(force=True, silent=True) or {}
+        endereco = data.get('endereco', '').strip()
         
-        logger.info(f"[IPTU] Endereço final: '{endereco}'")
+        logger.info(f"[IPTU] Endereço: '{endereco}'")
         
         if not endereco:
             logger.error(f"[IPTU] Endereço vazio")
@@ -237,37 +180,20 @@ def obter_metragem_iptu():
                 "sucesso": False
             }), 400
         
-        # ESTRATÉGIA 1: Consultar CSV IPTU
-        logger.info(f"[IPTU] Estratégia 1: CSV IPTU")
-        resultado_csv = consultar_iptu_csv(endereco)
+        # Consultar IPTU
+        resultado = consultar_iptu(endereco)
         
-        if resultado_csv and resultado_csv.get('metragem'):
-            logger.info(f"[IPTU] ✅ CSV: {resultado_csv['metragem']} m²")
+        if resultado:
+            logger.info(f"[IPTU] ✅ Retornando: {resultado['metragem']} m²")
             return jsonify({
-                "metragem": resultado_csv['metragem'],
-                "fonte": "iptu_csv",
-                "endereco": resultado_csv.get('endereco'),
-                "numero": resultado_csv.get('numero'),
-                "bairro": resultado_csv.get('bairro'),
-                "sucesso": True
-            }), 200
-        
-        # ESTRATÉGIA 2: Consultar banco local (fallback)
-        logger.info(f"[IPTU] Estratégia 2: Banco local")
-        endereco_limpo = endereco.lower().strip()
-        
-        if endereco_limpo in IPTU_DATABASE:
-            resultado_local = IPTU_DATABASE[endereco_limpo]
-            logger.info(f"[IPTU] ✅ Banco local: {resultado_local['metragem']} m²")
-            return jsonify({
-                "metragem": resultado_local['metragem'],
+                "metragem": resultado['metragem'],
                 "fonte": "iptu_local",
-                "endereco": resultado_local.get('endereco'),
-                "sql": resultado_local.get('sql'),
+                "rua": resultado['rua'],
+                "numero": resultado['numero'],
                 "sucesso": True
             }), 200
         
-        logger.warning(f"[IPTU] Não encontrado em nenhuma fonte: {endereco}")
+        logger.warning(f"[IPTU] Não encontrado: {endereco}")
         return jsonify({
             "metragem": None,
             "fonte": "nao_encontrado",
@@ -291,7 +217,7 @@ def obter_metragem_iptu():
 
 def enviar_imagem_wati(telefone, endereco):
     """
-    Envia imagem de satélite para o WhatsApp via WATI API (sendSessionFile)
+    Envia imagem de satélite para o WhatsApp via WATI API
     """
     try:
         # Formatar telefone
@@ -299,7 +225,7 @@ def enviar_imagem_wati(telefone, endereco):
         if not phone.startswith("+"):
             phone = "+" + phone
         
-        logger.info(f"[SATELLITE] Passo 1: Obtendo imagem de satélite para {endereco}")
+        logger.info(f"[SATELLITE] Passo 1: Obtendo imagem para {endereco}")
         
         # Baixar a imagem do Google Maps
         url = "https://maps.googleapis.com/maps/api/staticmap"
@@ -320,38 +246,37 @@ def enviar_imagem_wati(telefone, endereco):
             logger.error("[SATELLITE] Resposta não é uma imagem")
             return False
         
-        # Enviar a imagem via WATI API (sendSessionFile)
-        logger.info(f"[SATELLITE] Passo 2: Enviando imagem via WATI para {phone}")
+        # Enviar a imagem via WATI API
+        logger.info(f"[SATELLITE] Passo 2: Enviando para {phone}")
         
         headers = {"Authorization": f"Bearer {WATI_API_TOKEN}"}
         url_session = f"{WATI_BASE_URL}/{WATI_TENANT_ID}/api/v1/sendSessionFile/{phone}"
         
-        logger.info(f"[SATELLITE] URL WATI: {url_session}")
+        logger.info(f"[SATELLITE] URL: {url_session}")
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
-        data = {'caption': f'Imagem de satélite para: {endereco}'}
+        data = {'caption': f'Imagem de satélite: {endereco}'}
         
         response_session = requests.post(url_session, headers=headers, files=files, data=data, timeout=30)
         
-        logger.info(f"[SATELLITE] Resposta do envio: {response_session.status_code}")
-        logger.info(f"[SATELLITE] Detalhes: {response_session.text[:200]}")
+        logger.info(f"[SATELLITE] Resposta: {response_session.status_code}")
         
         if response_session.status_code in [200, 201]:
-            logger.info(f"[SATELLITE] ✅ Imagem enviada com sucesso!")
+            logger.info(f"[SATELLITE] ✅ Imagem enviada!")
             return True
         else:
-            logger.warning(f"[SATELLITE] ⚠️ Falha ao enviar (status {response_session.status_code})")
+            logger.warning(f"[SATELLITE] ⚠️ Falha (status {response_session.status_code})")
             return False
         
     except Exception as e:
-        logger.error(f"[SATELLITE] Erro no processo: {str(e)}")
+        logger.error(f"[SATELLITE] Erro: {str(e)}")
         return False
 
 
 @app.route('/analise-imagemdesatelite', methods=['POST'])
 def analise_imagemdesatelite():
     """
-    Endpoint para enviar imagem de satélite via WATI
+    Endpoint para enviar imagem de satélite
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
@@ -393,11 +318,11 @@ def analise_imagemdesatelite():
 @app.before_request
 def startup():
     """Executado antes da primeira requisição"""
-    global IPTU_DF
+    global IPTU_DATABASE
     
-    if IPTU_DF is None:
+    if not IPTU_DATABASE:
         logger.info("[STARTUP] Carregando dados IPTU...")
-        carregar_iptu_csv()
+        carregar_iptu_local()
 
 
 # ============================================================================
@@ -407,7 +332,7 @@ def startup():
 if __name__ == '__main__':
     # Carregar IPTU na inicialização
     logger.info("[MAIN] Carregando dados IPTU...")
-    carregar_iptu_csv()
+    carregar_iptu_local()
     
     port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
