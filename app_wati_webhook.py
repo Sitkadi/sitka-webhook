@@ -144,10 +144,13 @@ def enviar_imagem_wati(telefone, endereco):
         
         logger.info(f"[SATELLITE] Obtendo imagem para {endereco}")
         
+        # Forçar São Paulo, Brasil na busca
+        endereco_completo = f"{endereco}, São Paulo, Brasil"
+        
         # Baixar a imagem do Google Maps
         url = "https://maps.googleapis.com/maps/api/staticmap"
         params = {
-            "center": endereco,
+            "center": endereco_completo,
             "zoom": 18,
             "size": "600x600",
             "maptype": "satellite",
@@ -170,7 +173,7 @@ def enviar_imagem_wati(telefone, endereco):
         url_session = f"{WATI_BASE_URL}/{WATI_TENANT_ID}/api/v1/sendSessionFile/{phone}"
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
-        data = {'caption': f'Imagem de satélite: {endereco}'}
+        data = {'caption': f'Imagem de satélite: {endereco_completo}'}
         
         response_session = requests.post(url_session, headers=headers, files=files, data=data, timeout=30)
         
@@ -181,6 +184,7 @@ def enviar_imagem_wati(telefone, endereco):
             return True
         else:
             logger.warning(f"[SATELLITE] ⚠️ Falha (status {response_session.status_code})")
+            logger.warning(f"[SATELLITE] Resposta: {response_session.text}")
             return False
         
     except Exception as e:
