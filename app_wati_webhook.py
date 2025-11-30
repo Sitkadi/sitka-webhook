@@ -6,6 +6,7 @@ import json
 from flask import Flask, request, jsonify
 from datetime import datetime
 from urllib.parse import parse_qs, unquote
+import re
 
 # ============================================================================
 # CONFIGURAÇÃO
@@ -45,13 +46,25 @@ IPTU_DATABASE = {
 
 def decodificar_body(raw_data):
     """
-    Tenta decodificar dados com múltiplos encodings
-    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252 → Force com replace
+    Tenta decodificar dados com MÚLTIPLOS encodings
+    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252 → UTF-16 → Force com replace
     """
     if not raw_data:
         return None
     
-    encodings = ['utf-8', 'windows-1252', 'iso-8859-1', 'latin-1', 'cp1252']
+    # Lista expandida de encodings (incluindo UTF-16 para PowerShell Admin)
+    encodings = [
+        'utf-8', 
+        'windows-1252', 
+        'iso-8859-1', 
+        'latin-1', 
+        'cp1252',
+        'utf-16',
+        'utf-16-le',
+        'utf-16-be',
+        'cp850',  # DOS
+        'cp437',  # DOS
+    ]
     
     for encoding in encodings:
         try:
@@ -72,6 +85,31 @@ def decodificar_body(raw_data):
         logger.error(f"[ENCODING] ❌ Falha mesmo com replace: {str(e)}")
         return None
 
+
+def extrair_endereco_json(raw_str):
+    """
+    Extrai endereço de uma string JSON mesmo que malformada
+    """
+    try:
+        # Tentar parse normal
+        data = json.loads(raw_str)
+        if isinstance(data, dict) and 'endereco' in data:
+            return data.get('endereco', '').strip()
+    except:
+        pass
+    
+    # Tentar extração com regex
+    match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
+    if match:
+        return match.group(1).strip()
+    
+    # Tentar com aspas simples
+    match = re.search(r"'endereco'\s*:\s*'([^']*)'", raw_str)
+    if match:
+        return match.group(1).strip()
+    
+    return None
+
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
@@ -81,7 +119,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "17.0"
+        "version": "18.0"
     }), 200
 
 # ============================================================================
@@ -93,7 +131,7 @@ def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
     Aceita JSON ou form-urlencoded
-    Suporta múltiplos encodings com fallback para replace
+    Suporta múltiplos encodings (incluindo PowerShell Admin)
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
@@ -136,13 +174,20 @@ def obter_metragem_iptu():
                 # Se for JSON
                 if raw.strip().startswith('{'):
                     logger.info(f"[IPTU] Detectado JSON em raw body")
-                    try:
-                        data = json.loads(raw)
-                        endereco = data.get('endereco', '').strip()
-                        if endereco:
-                            logger.info(f"[IPTU] ✅ Extraído de JSON raw: {endereco[:50]}...")
-                    except Exception as e:
-                        logger.error(f"[IPTU] Erro ao parsear JSON raw: {str(e)}")
+                    
+                    # Tentar extração com regex (mais robusta)
+                    endereco = extrair_endereco_json(raw)
+                    if endereco:
+                        logger.info(f"[IPTU] ✅ Extraído de JSON raw (regex): {endereco[:50]}...")
+                    else:
+                        # Tentar parse normal
+                        try:
+                            data = json.loads(raw)
+                            endereco = data.get('endereco', '').strip()
+                            if endereco:
+                                logger.info(f"[IPTU] ✅ Extraído de JSON raw (parse): {endereco[:50]}...")
+                        except Exception as e:
+                            logger.error(f"[IPTU] Erro ao parsear JSON raw: {str(e)}")
                 
                 # Se for form-urlencoded
                 elif '=' in raw and not raw.startswith('{'):
