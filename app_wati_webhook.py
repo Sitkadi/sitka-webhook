@@ -4,6 +4,7 @@ import requests
 import json
 import io
 from flask import Flask, request, jsonify
+from difflib import SequenceMatcher
 
 # ============================================================================
 # CONFIGURAÇÃO
@@ -21,48 +22,204 @@ WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 
 # ============================================================================
 # BANCO DE DADOS LOCAL DE IPTU (MOCKADO)
+# Estrutura: {(nome_logradouro, numero): {"metragem": valor}}
 # ============================================================================
 
 IPTU_DATABASE = {
-    "AVENIDA PAULISTA, 1000": {"metragem": 2500},
-    "AVENIDA PAULISTA, 00001000": {"metragem": 2500},
-    "RUA OSCAR FREIRE, 500": {"metragem": 1800},
-    "RUA OSCAR FREIRE, 00000500": {"metragem": 1800},
-    "AVENIDA BRASIL, 2000": {"metragem": 3200},
-    "AVENIDA BRASIL, 00002000": {"metragem": 3200},
-    "RUA AUGUSTA, 800": {"metragem": 1500},
-    "RUA AUGUSTA, 00000800": {"metragem": 1500},
-    "AVENIDA IMIGRANTES, 3000": {"metragem": 4500},
-    "AVENIDA IMIGRANTES, 00003000": {"metragem": 4500},
-    "RUA 25 DE MARÇO, 1500": {"metragem": 2200},
-    "RUA 25 DE MARÇO, 00001500": {"metragem": 2200},
-    "R S CAETANO, 13": {"metragem": 136},
-    "R S CAETANO, 00000013": {"metragem": 136},
+    ("PAULISTA", "1000"): {"metragem": 2500},
+    ("OSCAR FREIRE", "500"): {"metragem": 1800},
+    ("BRASIL", "2000"): {"metragem": 3200},
+    ("AUGUSTA", "800"): {"metragem": 1500},
+    ("IMIGRANTES", "3000"): {"metragem": 4500},
+    ("25 DE MARÇO", "1500"): {"metragem": 2200},
+    ("S CAETANO", "13"): {"metragem": 136},
 }
 
 
-def consultar_iptu(endereco):
-    """Consulta IPTU no banco de dados local"""
+def extrair_nome_numero(endereco_usuario):
+    """
+    Extrai nome da rua e número do endereço do usuário
+    Exemplos:
+    - "Avenida Brasil, 2000" → ("BRASIL", "2000")
+    - "Rua Oscar Freire, 500" → ("OSCAR FREIRE", "500")
+    - "Av Brasil 2000" → ("BRASIL", "2000")
+    """
     try:
-        endereco_limpo = endereco.strip().upper()
+        endereco = endereco_usuario.strip().upper()
         
-        # Tentar com endereço original
-        if endereco_limpo in IPTU_DATABASE:
-            return IPTU_DATABASE[endereco_limpo]
+        # Remover prefixos comuns
+        prefixos = ["AVENIDA ", "AVENUE ", "AV. ", "AV ", 
+                   "RUA ", "R. ", "R ",
+                   "TRAVESSA ", "TV. ", "TV ",
+                   "PRAÇA ", "PÇ. ", "PÇ ",
+                   "LARGO ", "LG. ", "LG ",
+                   "ESTRADA ", "EST. ", "EST ",
+                   "ALAMEDA ", "AL. ", "AL ",
+                   "PASSAGEM ", "PASS. ", "PASS "]
         
-        # Tentar com padding de zeros
-        partes = endereco_limpo.split(',')
-        if len(partes) >= 2:
-            rua = partes[0].strip()
-            numero_raw = partes[1].strip().split()[0]
+        for prefixo in prefixos:
+            if endereco.startswith(prefixo):
+                endereco = endereco[len(prefixo):]
+                break
+        
+        # Separar por vírgula ou espaço
+        if ',' in endereco:
+            partes = endereco.split(',')
+            nome = partes[0].strip()
+            numero = partes[1].strip().split()[0] if len(partes) > 1 else ""
+        else:
+            # Separar último número
+            palavras = endereco.split()
+            numero = ""
+            nome_partes = []
             
-            if numero_raw.isdigit():
-                numero_padded = numero_raw.zfill(5)
-                chave = f"{rua}, {numero_padded}"
-                if chave in IPTU_DATABASE:
-                    return IPTU_DATABASE[chave]
+            for palavra in palavras:
+                if palavra.isdigit() and not numero:
+                    numero = palavra
+                else:
+                    nome_partes.append(palavra)
+            
+            nome = " ".join(nome_partes).strip()
         
+        logger.info(f"[IPTU] Extraído: nome='{nome}', numero='{numero}'")
+        return nome, numero
+        
+    except Exception as e:
+        logger.error(f"[IPTU] Erro ao extrair: {str(e)}")
+        return "", ""
+
+
+def similaridade(a, b):
+    """Calcula similaridade entre duas strings (0 a 1)"""
+    return SequenceMatcher(None, a, b).ratio()
+
+
+def buscar_no_banco(nome_logradouro, numero_imovel):
+    """
+    Busca no banco IPTU com fuzzy matching
+    Retorna o resultado se encontrar com similaridade > 0.8
+    """
+    try:
+        nome_limpo = nome_logradouro.strip().upper()
+        numero_limpo = numero_imovel.strip()
+        
+        logger.info(f"[IPTU] Buscando: nome='{nome_limpo}', numero='{numero_limpo}'")
+        
+        # Busca exata primeiro
+        for (banco_nome, banco_numero), dados in IPTU_DATABASE.items():
+            if banco_nome == nome_limpo and banco_numero == numero_limpo:
+                logger.info(f"[IPTU] ✅ Encontrado (exato): {banco_nome}, {banco_numero}")
+                return dados
+        
+        # Busca com fuzzy matching
+        melhor_match = None
+        melhor_score = 0
+        
+        for (banco_nome, banco_numero), dados in IPTU_DATABASE.items():
+            # Comparar nome com similaridade
+            score_nome = similaridade(nome_limpo, banco_nome)
+            
+            # Comparar número (deve ser exato ou muito similar)
+            score_numero = 1.0 if banco_numero == numero_limpo else 0.0
+            
+            # Score combinado: 70% nome + 30% número
+            score_total = (score_nome * 0.7) + (score_numero * 0.3)
+            
+            logger.debug(f"[IPTU] Comparando com '{banco_nome}, {banco_numero}': score={score_total:.2f}")
+            
+            if score_total > melhor_score:
+                melhor_score = score_total
+                melhor_match = (banco_nome, banco_numero, dados)
+        
+        # Aceitar se score > 0.75
+        if melhor_score > 0.75 and melhor_match:
+            banco_nome, banco_numero, dados = melhor_match
+            logger.info(f"[IPTU] ✅ Encontrado (fuzzy): {banco_nome}, {banco_numero} (score={melhor_score:.2f})")
+            return dados
+        
+        logger.warning(f"[IPTU] Não encontrado (melhor score: {melhor_score:.2f})")
         return None
+        
+    except Exception as e:
+        logger.error(f"[IPTU] Erro na busca: {str(e)}")
+        return None
+
+
+def validar_e_geocodificar_endereco_sp(endereco_usuario):
+    """
+    NOVO FLUXO:
+    1. Pega endereço bruto do usuário
+    2. Adiciona ", São Paulo" no final
+    3. Envia para Google Geocoding com componentes SP|BR
+    4. Valida se Google retornou um endereço em SP, Brasil
+    5. Retorna endereço formatado ou None se não for SP
+    """
+    try:
+        # PASSO 1: Adicionar São Paulo no final
+        endereco_com_sp = f"{endereco_usuario.strip()}, São Paulo"
+        logger.info(f"[GEOCODE] Validando: '{endereco_com_sp}'")
+        
+        # PASSO 2: Enviar para Google Geocoding com componentes SP|BR
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": endereco_com_sp,
+            "components": "administrative_area:SP|country:BR",
+            "key": GOOGLE_API_KEY
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+        
+        # PASSO 3: Validar resposta
+        if not data.get('results'):
+            logger.warning(f"[GEOCODE] ❌ Nenhum resultado para: {endereco_com_sp}")
+            return None
+        
+        result = data['results'][0]
+        endereco_formatado = result['formatted_address']
+        
+        # PASSO 4: Validar se está realmente em SP, Brasil
+        if "SP" in endereco_formatado and "Brazil" in endereco_formatado:
+            logger.info(f"[GEOCODE] ✅ Validado como SP: {endereco_formatado}")
+            return endereco_formatado
+        else:
+            logger.warning(f"[GEOCODE] ❌ Fora de SP: {endereco_formatado}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"[GEOCODE] Erro: {str(e)}")
+        return None
+
+
+def consultar_iptu(endereco_usuario):
+    """
+    Consulta IPTU no banco de dados local
+    
+    NOVO FLUXO:
+    1. Valida e geocodifica o endereço (garante que é SP)
+    2. Extrai nome da rua e número
+    3. Busca no banco com fuzzy matching
+    4. Retorna metragem ou None
+    """
+    try:
+        # PASSO 1: Validar e geocodificar
+        endereco_validado = validar_e_geocodificar_endereco_sp(endereco_usuario)
+        
+        if not endereco_validado:
+            logger.error(f"[IPTU] Endereço rejeitado (não é de São Paulo): {endereco_usuario}")
+            return None
+        
+        # PASSO 2: Extrair nome e número
+        nome_logradouro, numero_imovel = extrair_nome_numero(endereco_usuario)
+        
+        if not nome_logradouro or not numero_imovel:
+            logger.error(f"[IPTU] Não foi possível extrair nome/número: {endereco_usuario}")
+            return None
+        
+        # PASSO 3: Buscar no banco
+        resultado = buscar_no_banco(nome_logradouro, numero_imovel)
+        
+        return resultado
         
     except Exception as e:
         logger.error(f"[IPTU] Erro: {str(e)}")
@@ -78,7 +235,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "37.0"
+        "version": "44.0"
     }), 200
 
 
@@ -93,7 +250,7 @@ def obter_metragem_iptu():
         data = request.get_json(force=True, silent=True) or {}
         endereco = data.get('endereco', '').strip()
         
-        logger.info(f"[IPTU] Endereço: '{endereco}'")
+        logger.info(f"[IPTU] Endereço recebido: '{endereco}'")
         
         if not endereco:
             return jsonify({
@@ -280,7 +437,7 @@ def analise_imagemdesatelite():
 # ============================================================================
 
 if __name__ == '__main__':
-    logger.info("[MAIN] SITKA Webhook v37.0 iniciado")
+    logger.info("[MAIN] SITKA Webhook v44.0 iniciado")
     logger.info(f"[MAIN] {len(IPTU_DATABASE)} endereços cadastrados no banco local")
     
     port = int(os.getenv('PORT', 10000))
