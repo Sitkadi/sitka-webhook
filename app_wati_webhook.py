@@ -4,6 +4,7 @@ import difflib
 import requests
 from flask import Flask, request, jsonify
 from datetime import datetime
+from urllib.parse import parse_qs, unquote
 
 # ============================================================================
 # CONFIGURAÇÃO
@@ -46,7 +47,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "12.0"
+        "version": "13.0"
     }), 200
 
 # ============================================================================
@@ -57,35 +58,52 @@ def health():
 def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
+    Aceita JSON ou form-urlencoded
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
         logger.info(f"[IPTU] Content-Type: {request.content_type}")
-        logger.info(f"[IPTU] Raw body: {request.data}")
-        logger.info(f"[IPTU] Headers: {dict(request.headers)}")
         
-        # Tentar diferentes formas de receber JSON
+        # Tentar receber JSON
         data = None
-        if request.is_json:
+        endereco = None
+        
+        # Primeiro tenta JSON
+        if request.is_json or 'application/json' in request.content_type:
+            logger.info(f"[IPTU] Recebendo como JSON")
             data = request.get_json(force=True, silent=True)
-        else:
-            logger.warning(f"[IPTU] Request não é JSON, tentando force...")
-            data = request.get_json(force=True, silent=True)
+            if data:
+                endereco = data.get('endereco', '').strip()
         
-        logger.info(f"[IPTU] JSON data: {data}")
+        # Se não conseguiu JSON, tenta form-urlencoded
+        if not endereco and request.form:
+            logger.info(f"[IPTU] Recebendo como form-urlencoded")
+            endereco = request.form.get('endereco', '').strip()
         
-        if not data:
-            logger.error(f"[IPTU] Erro: Nenhum JSON recebido")
-            return jsonify({
-                "metragem": None,
-                "fonte": "erro",
-                "mensagem": "Nenhum JSON recebido",
-                "sucesso": False
-            }), 400
+        # Se ainda não conseguiu, tenta raw body
+        if not endereco and request.data:
+            logger.info(f"[IPTU] Tentando raw body")
+            try:
+                raw = request.data.decode('utf-8')
+                logger.info(f"[IPTU] Raw body: {raw}")
+                
+                # Se for form-urlencoded
+                if '=' in raw:
+                    parsed = parse_qs(raw)
+                    if 'endereco' in parsed:
+                        endereco = parsed['endereco'][0].strip()
+                        logger.info(f"[IPTU] Extraído de form: {endereco}")
+                
+                # Se for JSON
+                elif raw.startswith('{'):
+                    import json
+                    data = json.loads(raw)
+                    endereco = data.get('endereco', '').strip()
+                    logger.info(f"[IPTU] Extraído de JSON: {endereco}")
+            except Exception as e:
+                logger.error(f"[IPTU] Erro ao processar raw body: {str(e)}")
         
-        endereco = data.get('endereco', '').strip() if isinstance(data, dict) else ''
-        
-        logger.info(f"[IPTU] Endereço extraído: '{endereco}'")
+        logger.info(f"[IPTU] Endereço final: '{endereco}'")
         
         if not endereco:
             logger.error(f"[IPTU] Erro: Endereço vazio")
@@ -146,7 +164,11 @@ def consultar_banco_local(endereco):
         if ' - ' in endereco_limpo:
             endereco_limpo = endereco_limpo.split(' - ')[0].strip()
         elif ',' in endereco_limpo:
-            endereco_limpo = endereco_limpo.split(',')[0].strip()
+            # Manter a vírgula se houver
+            partes = endereco_limpo.split(',')
+            endereco_limpo = partes[0].strip()
+            if len(partes) > 1 and partes[1].strip().isdigit():
+                endereco_limpo = f"{endereco_limpo}, {partes[1].strip()}"
         
         # Remover pontos
         endereco_limpo = endereco_limpo.replace('.', '')
@@ -199,9 +221,6 @@ def analise_imagemdesatelite():
         
         if not telefone or not endereco:
             return jsonify({"sucesso": False, "erro": "Telefone ou endereço não fornecido"}), 400
-        
-        # Aqui você pode integrar com Google Maps Static API para gerar imagem
-        # Por enquanto, retornamos sucesso
         
         return jsonify({
             "sucesso": True,
