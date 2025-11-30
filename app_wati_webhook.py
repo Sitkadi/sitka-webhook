@@ -21,95 +21,31 @@ WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '1047617')
 WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 
 # ============================================================================
-# BANCO DE DADOS LOCAL DE IPTU (SEM PANDAS)
+# BANCO DE DADOS LOCAL DE IPTU (MOCKADO)
 # ============================================================================
 
-# Carregado em memória na inicialização
-IPTU_DATABASE = {}
-
-def carregar_iptu_local():
-    """
-    Carrega dados IPTU do CSV em um dicionário simples
-    Sem usar pandas - apenas leitura de arquivo
-    """
-    global IPTU_DATABASE
-    
-    try:
-        # Procurar em múltiplos caminhos
-        caminhos_possiveis = [
-            '/app/IPTU_2025_OTIMIZADO.csv',
-            'IPTU_2025_OTIMIZADO.csv',
-            '/opt/render/project/src/IPTU_2025_OTIMIZADO.csv'
-        ]
-        
-        iptu_file = None
-        for caminho in caminhos_possiveis:
-            if os.path.exists(caminho):
-                iptu_file = caminho
-                logger.info(f"[IPTU] Arquivo encontrado: {iptu_file}")
-                break
-        
-        if not iptu_file:
-            logger.warning(f"[IPTU] Arquivo não encontrado em nenhum caminho")
-            return False
-        
-        logger.info(f"[IPTU] Carregando arquivo...")
-        
-        count = 0
-        with open(iptu_file, 'r', encoding='latin-1') as f:
-            # Pular header
-            header = f.readline().strip().split(';')
-            
-            # Encontrar índices das colunas
-            idx_rua = header.index('NOME DE LOGRADOURO DO IMOVEL')
-            idx_numero = header.index('NUMERO DO IMOVEL')
-            idx_metragem = header.index('AREA DO TERRENO')
-            
-            # Ler linhas
-            for line in f:
-                partes = line.strip().split(';')
-                
-                if len(partes) <= max(idx_rua, idx_numero, idx_metragem):
-                    continue
-                
-                rua = partes[idx_rua].strip().upper()
-                numero = partes[idx_numero].strip()
-                metragem_str = partes[idx_metragem].strip()
-                
-                try:
-                    metragem = float(metragem_str.replace(',', '.'))
-                except:
-                    continue
-                
-                # Chave: "RUA, NUMERO"
-                chave = f"{rua}, {numero}"
-                IPTU_DATABASE[chave] = {
-                    "metragem": metragem,
-                    "rua": rua,
-                    "numero": numero
-                }
-                
-                count += 1
-                if count % 100000 == 0:
-                    logger.info(f"[IPTU] {count:,} registros carregados...")
-        
-        logger.info(f"[IPTU] ✅ {count:,} registros carregados com sucesso!")
-        return True
-        
-    except Exception as e:
-        logger.error(f"[IPTU] Erro ao carregar: {str(e)}")
-        return False
+IPTU_DATABASE = {
+    "AVENIDA PAULISTA, 1000": {"metragem": 2500, "rua": "AVENIDA PAULISTA", "numero": "1000"},
+    "AVENIDA PAULISTA, 00001000": {"metragem": 2500, "rua": "AVENIDA PAULISTA", "numero": "01000"},
+    "RUA OSCAR FREIRE, 500": {"metragem": 1800, "rua": "RUA OSCAR FREIRE", "numero": "500"},
+    "RUA OSCAR FREIRE, 00000500": {"metragem": 1800, "rua": "RUA OSCAR FREIRE", "numero": "00500"},
+    "AVENIDA BRASIL, 2000": {"metragem": 3200, "rua": "AVENIDA BRASIL", "numero": "2000"},
+    "AVENIDA BRASIL, 00002000": {"metragem": 3200, "rua": "AVENIDA BRASIL", "numero": "02000"},
+    "RUA AUGUSTA, 800": {"metragem": 1500, "rua": "RUA AUGUSTA", "numero": "800"},
+    "RUA AUGUSTA, 00000800": {"metragem": 1500, "rua": "RUA AUGUSTA", "numero": "00800"},
+    "AVENIDA IMIGRANTES, 3000": {"metragem": 4500, "rua": "AVENIDA IMIGRANTES", "numero": "3000"},
+    "AVENIDA IMIGRANTES, 00003000": {"metragem": 4500, "rua": "AVENIDA IMIGRANTES", "numero": "03000"},
+    "RUA 25 DE MARÇO, 1500": {"metragem": 2200, "rua": "RUA 25 DE MARÇO", "numero": "1500"},
+    "RUA 25 DE MARÇO, 00001500": {"metragem": 2200, "rua": "RUA 25 DE MARÇO", "numero": "01500"},
+    "R S CAETANO, 13": {"metragem": 136, "rua": "R S CAETANO", "numero": "13"},
+    "R S CAETANO, 00000013": {"metragem": 136, "rua": "R S CAETANO", "numero": "00013"},
+}
 
 
 def consultar_iptu(endereco):
     """
     Consulta IPTU no banco de dados local
-    Tenta múltiplos formatos
     """
-    if not IPTU_DATABASE:
-        logger.warning("[IPTU] Banco de dados vazio")
-        return None
-    
     try:
         # Limpar endereço
         endereco_limpo = endereco.strip().upper()
@@ -159,8 +95,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "34.0",
-        "iptu_loaded": len(IPTU_DATABASE) > 0,
+        "version": "36.0",
         "iptu_count": len(IPTU_DATABASE)
     }), 200
 
@@ -310,7 +245,8 @@ def analise_imagemdesatelite():
                 "sucesso": True,
                 "mensagem": "Imagem de satélite enviada com sucesso",
                 "telefone": telefone,
-                "endereco": endereco
+                "endereco": endereco,
+                "imagemdesatelite_url": f"https://maps.googleapis.com/maps/api/staticmap?center={endereco}&zoom=18&size=600x600&maptype=satellite&key={GOOGLE_API_KEY}"
             }), 200
         else:
             return jsonify({
@@ -324,27 +260,12 @@ def analise_imagemdesatelite():
 
 
 # ============================================================================
-# STARTUP
-# ============================================================================
-
-@app.before_request
-def startup():
-    """Executado antes da primeira requisição"""
-    global IPTU_DATABASE
-    
-    if not IPTU_DATABASE:
-        logger.info("[STARTUP] Carregando dados IPTU...")
-        carregar_iptu_local()
-
-
-# ============================================================================
 # MAIN
 # ============================================================================
 
 if __name__ == '__main__':
-    # Carregar IPTU na inicialização
-    logger.info("[MAIN] Carregando dados IPTU...")
-    carregar_iptu_local()
+    logger.info("[MAIN] SITKA Webhook v36.0 iniciado")
+    logger.info(f"[MAIN] {len(IPTU_DATABASE)} endereços cadastrados no banco local")
     
     port = int(os.getenv('PORT', 10000))
     app.run(host='0.0.0.0', port=port, debug=False)
