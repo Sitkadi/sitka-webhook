@@ -64,38 +64,39 @@ def obter_metragem_iptu():
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
         logger.info(f"[IPTU] Content-Type: {request.content_type}")
         
-        # Tentar receber JSON
-        data = None
         endereco = None
         
-        # Primeiro tenta JSON
-        if request.is_json or 'application/json' in request.content_type:
+        # 1. Tenta JSON
+        if request.is_json:
             logger.info(f"[IPTU] Recebendo como JSON")
             data = request.get_json(force=True, silent=True)
             if data:
                 endereco = data.get('endereco', '').strip()
         
-        # Se não conseguiu JSON, tenta form-urlencoded
+        # 2. Tenta form-urlencoded via request.form
         if not endereco and request.form:
-            logger.info(f"[IPTU] Recebendo como form-urlencoded")
+            logger.info(f"[IPTU] Recebendo como form-urlencoded (form)")
             endereco = request.form.get('endereco', '').strip()
         
-        # Se ainda não conseguiu, tenta raw body
+        # 3. Tenta raw body
         if not endereco and request.data:
             logger.info(f"[IPTU] Tentando raw body")
             try:
                 raw = request.data.decode('utf-8')
-                logger.info(f"[IPTU] Raw body: {raw}")
+                logger.info(f"[IPTU] Raw body: {raw[:100]}...")
                 
                 # Se for form-urlencoded
-                if '=' in raw:
+                if '=' in raw and not raw.startswith('{'):
+                    logger.info(f"[IPTU] Detectado form-urlencoded")
                     parsed = parse_qs(raw)
+                    logger.info(f"[IPTU] Parsed: {parsed}")
                     if 'endereco' in parsed:
                         endereco = parsed['endereco'][0].strip()
                         logger.info(f"[IPTU] Extraído de form: {endereco}")
                 
                 # Se for JSON
                 elif raw.startswith('{'):
+                    logger.info(f"[IPTU] Detectado JSON")
                     import json
                     data = json.loads(raw)
                     endereco = data.get('endereco', '').strip()
