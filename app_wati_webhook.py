@@ -1,6 +1,6 @@
 """
-SITKA Webhook - Consulta IPTU via WFS Geosampa
-Busca metragem pelo endereço no banco de dados público de São Paulo
+SITKA Webhook - Consulta IPTU via Base dos Dados API
+Busca metragem pelo endereço usando API REST pública
 """
 
 from flask import Flask, request, jsonify
@@ -8,7 +8,7 @@ import requests
 import os
 from datetime import datetime
 import logging
-import xml.etree.ElementTree as ET
+import json
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -22,9 +22,6 @@ WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '')
 WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 PORT = int(os.getenv('PORT', 10000))
 
-# WFS Geosampa
-WFS_URL = "https://geosampa.prefeitura.sp.gov.br/geoserver/wfs"
-
 # ============================================================================
 # HEALTH CHECK
 # ============================================================================
@@ -34,18 +31,18 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "6.0"
+        "version": "7.0"
     }), 200
 
 
 # ============================================================================
-# OBTER METRAGEM VIA IPTU
+# OBTER METRAGEM VIA IPTU - VERSÃO FINAL
 # ============================================================================
 
 @app.route('/obter-metragem-iptu', methods=['POST'])
 def obter_metragem_iptu():
     """
-    Consulta metragem do terreno via WFS Geosampa
+    Consulta metragem do terreno via Base dos Dados
     
     Body:
     {
@@ -68,14 +65,14 @@ def obter_metragem_iptu():
                 "sucesso": False
             }), 400
         
-        # Consultar WFS
-        resultado = consultar_wfs_iptu(endereco)
+        # Tentar consultar via API
+        resultado = consultar_iptu_api(endereco)
         
         if resultado and resultado.get('metragem'):
             logger.info(f"[IPTU] ✅ Encontrado: {resultado['metragem']} m²")
             return jsonify({
                 "metragem": resultado['metragem'],
-                "fonte": "iptu_geosampa",
+                "fonte": "iptu_basedados",
                 "endereco": resultado.get('endereco'),
                 "sql": resultado.get('sql'),
                 "sucesso": True
@@ -99,55 +96,69 @@ def obter_metragem_iptu():
         }), 500
 
 
-def consultar_wfs_iptu(endereco):
+def consultar_iptu_api(endereco):
     """
-    Consulta WFS Geosampa para obter metragem
+    Consulta API da Base dos Dados para obter metragem
+    Usa SQL query via API REST
     """
     try:
-        # Preparar query
-        endereco_limpo = endereco.split(',')[0].strip().upper()
+        # Preparar endereço
+        endereco_limpo = endereco.split(',')[0].strip()
         
-        # Parâmetros WFS
-        params = {
-            "service": "WFS",
-            "version": "2.0.0",
-            "request": "GetFeature",
-            "typeName": "geosampa:IPTU",
-            "outputFormat": "application/json",
-            "CQL_FILTER": f"UPPER(endereco) LIKE UPPER('%{endereco_limpo}%')",
-            "maxfeatures": 1
+        # Query SQL
+        sql = f"""
+        SELECT 
+            area_terreno,
+            endereco,
+            sql,
+            bairro
+        FROM `basedosdados.br_sp_saopaulo_geosampa_iptu.iptu`
+        WHERE UPPER(endereco) LIKE UPPER('%{endereco_limpo}%')
+        LIMIT 1
+        """
+        
+        logger.info(f"[API] Consultando: {endereco_limpo}")
+        
+        # Usar API REST do BigQuery
+        url = "https://www.googleapis.com/bigquery/v2/projects/basedosdados/queries"
+        
+        headers = {
+            "Authorization": f"Bearer {GOOGLE_API_KEY}",
+            "Content-Type": "application/json"
         }
         
-        logger.info(f"[WFS] Consultando: {endereco_limpo}")
+        payload = {
+            "query": sql,
+            "useLegacySql": False,
+            "maxResults": 1
+        }
         
-        response = requests.get(WFS_URL, params=params, timeout=15)
+        response = requests.post(url, json=payload, headers=headers, timeout=15)
         
-        logger.info(f"[WFS] Status: {response.status_code}")
+        logger.info(f"[API] Status: {response.status_code}")
         
         if response.status_code == 200:
             data = response.json()
             
-            if data.get('features') and len(data['features']) > 0:
-                feature = data['features'][0]
-                props = feature.get('properties', {})
-                
-                metragem = props.get('area_terreno') or props.get('AREA_TERRENO')
+            if data.get('rows') and len(data['rows']) > 0:
+                row = data['rows'][0]['f']
+                metragem = float(row[0]['v']) if row[0]['v'] else None
                 
                 if metragem:
                     return {
-                        "metragem": float(metragem),
-                        "endereco": props.get('endereco') or props.get('ENDERECO'),
-                        "sql": props.get('sql') or props.get('SQL')
+                        "metragem": metragem,
+                        "endereco": row[1]['v'] if len(row) > 1 else None,
+                        "sql": row[2]['v'] if len(row) > 2 else None
                     }
         
-        logger.warning(f"[WFS] Nenhum resultado")
+        logger.warning(f"[API] Nenhum resultado")
         return None
         
     except requests.exceptions.Timeout:
-        logger.error("[WFS] Timeout")
+        logger.error("[API] Timeout")
         return None
     except Exception as e:
-        logger.error(f"[WFS] Erro: {str(e)}")
+        logger.error(f"[API] Erro: {str(e)}")
         return None
 
 
@@ -265,5 +276,5 @@ def enviar_imagem_wati(telefone, url_imagem, endereco):
 # ============================================================================
 
 if __name__ == '__main__':
-    logger.info(f"🚀 SITKA Webhook v6.0 na porta {PORT}")
+    logger.info(f"🚀 SITKA Webhook v7.0 na porta {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
