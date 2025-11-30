@@ -202,17 +202,6 @@ def consultar_iptu(endereco_usuario):
     4. Retorna metragem ou None
     """
     try:
-        # PASSO 0: Rejeitar endereços de fora do Brasil
-        paises_estrangeiros = ['PERU', 'CHILE', 'ARGENTINA', 'COLOMBIA',
-                              'VENEZUELA', 'EQUADOR', 'BOLIVIA',
-                              'PARAGUAI', 'URUGUAY', 'GUYANA', 'SURINAME']
-        
-        endereco_upper = endereco_usuario.upper()
-        for pais in paises_estrangeiros:
-            if pais in endereco_upper:
-                logger.error(f"[IPTU] Endereco fora do Brasil detectado: {endereco_usuario}")
-                return None
-        
         # PASSO 1: Validar e geocodificar
         endereco_validado = validar_e_geocodificar_endereco_sp(endereco_usuario)
         
@@ -246,7 +235,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "45.0"
+        "version": "44.0"
     }), 200
 
 
@@ -448,7 +437,7 @@ def analise_imagemdesatelite():
 # ============================================================================
 
 if __name__ == '__main__':
-    logger.info("[MAIN] SITKA Webhook v45.0 iniciado")
+    logger.info("[MAIN] SITKA Webhook v44.0 iniciado")
     logger.info(f"[MAIN] {len(IPTU_DATABASE)} endereços cadastrados no banco local")
     
     port = int(os.getenv('PORT', 10000))
