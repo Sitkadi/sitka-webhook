@@ -1,7 +1,7 @@
 """
-SITKA Webhook v9.0 - VERSÃO FINAL
-Banco de dados local com dados reais de São Paulo
-Sem dependências de APIs externas para IPTU
+SITKA Webhook v10.0 - FINAL
+Banco de dados local com múltiplos formatos
+Aceita: Avenida, Av., Av, Rua, R., R, Rod., Rod
 """
 
 from flask import Flask, request, jsonify
@@ -23,31 +23,45 @@ WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '')
 WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 PORT = int(os.getenv('PORT', 10000))
 
-# Banco de dados local com endereços reais de São Paulo
-# IMPORTANTE: Todos os endereços devem ter NOME + NÚMERO
+# Banco de dados com múltiplos formatos (Google Maps + usuário)
 IPTU_DATABASE = {
-    # Avenida Paulista
+    # Avenida Paulista (1000)
     "avenida paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "av paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
+    "av. paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     "paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     
-    # Rua Oscar Freire
+    # Rua Oscar Freire (500)
     "rua oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "r oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "r. oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
     "oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
     
-    # Avenida Brasil
+    # Avenida Brasil (2000)
     "avenida brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "av brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
+    "av. brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
     "brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
     
-    # Rua Augusta
+    # Rua Augusta (800)
     "rua augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "r augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "r. augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
     "augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
     
-    # Avenida Imigrantes
+    # Avenida Imigrantes (3000)
     "avenida imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "av imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "av. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "rod imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "rod. imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
     "imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
     
-    # Rua 25 de Março
+    # Rua 25 de Março (1500)
     "rua 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "rua vinte e cinco de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "r 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "r. 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
     "25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
 }
 
@@ -60,12 +74,12 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "9.0"
+        "version": "10.0"
     }), 200
 
 
 # ============================================================================
-# OBTER METRAGEM - VERSÃO FINAL
+# OBTER METRAGEM - VERSÃO 10.0
 # ============================================================================
 
 @app.route('/obter-metragem-iptu', methods=['POST'])
@@ -75,8 +89,7 @@ def obter_metragem_iptu():
     
     Body:
     {
-        "endereco": "Avenida Paulista, 1000",
-        "cidade": "São Paulo"
+        "endereco": "Av. Paulista, 1000 - Bela Vista, São Paulo - SP, 01310-100, Brazil"
     }
     """
     
@@ -128,9 +141,13 @@ def obter_metragem_iptu():
 def consultar_banco_local(endereco):
     """
     Consulta banco de dados local com busca fuzzy
+    Extrai número e nome da rua do endereço formatado do Google Maps
     """
     try:
         endereco_limpo = endereco.lower().strip()
+        
+        # Remover CEP e país
+        endereco_limpo = endereco_limpo.split(',')[0].strip()
         
         logger.info(f"[DB] Consultando: {endereco_limpo}")
         
@@ -141,7 +158,7 @@ def consultar_banco_local(endereco):
         
         # Busca fuzzy (aproximada)
         chaves = list(IPTU_DATABASE.keys())
-        matches = difflib.get_close_matches(endereco_limpo, chaves, n=1, cutoff=0.5)
+        matches = difflib.get_close_matches(endereco_limpo, chaves, n=1, cutoff=0.6)
         
         if matches:
             logger.info(f"[DB] ✅ Match fuzzy: {matches[0]}")
@@ -284,5 +301,5 @@ def enviar_imagem_wati(telefone, url_imagem, endereco):
 # ============================================================================
 
 if __name__ == '__main__':
-    logger.info(f"🚀 SITKA Webhook v9.0 na porta {PORT}")
+    logger.info(f"🚀 SITKA Webhook v10.0 na porta {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
