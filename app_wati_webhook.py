@@ -35,10 +35,22 @@ def carregar_iptu_local():
     global IPTU_DATABASE
     
     try:
-        iptu_file = '/app/IPTU_2025_OTIMIZADO.csv'
+        # Procurar em múltiplos caminhos
+        caminhos_possiveis = [
+            '/app/IPTU_2025_OTIMIZADO.csv',
+            'IPTU_2025_OTIMIZADO.csv',
+            '/opt/render/project/src/IPTU_2025_OTIMIZADO.csv'
+        ]
         
-        if not os.path.exists(iptu_file):
-            logger.warning(f"[IPTU] Arquivo não encontrado: {iptu_file}")
+        iptu_file = None
+        for caminho in caminhos_possiveis:
+            if os.path.exists(caminho):
+                iptu_file = caminho
+                logger.info(f"[IPTU] Arquivo encontrado: {iptu_file}")
+                break
+        
+        if not iptu_file:
+            logger.warning(f"[IPTU] Arquivo não encontrado em nenhum caminho")
             return False
         
         logger.info(f"[IPTU] Carregando arquivo...")
