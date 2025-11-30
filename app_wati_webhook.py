@@ -155,11 +155,18 @@ def validar_e_geocodificar_endereco_sp(endereco_usuario):
     5. Retorna endereço formatado ou None se não for SP
     """
     try:
-        # PASSO 1: Adicionar São Paulo no final
-        endereco_com_sp = f"{endereco_usuario.strip()}, São Paulo"
+        # PASSO 1: Extrair apenas rua e numero (remove pais/cidade anterior)
+        nome_logradouro, numero_imovel = extrair_nome_numero(endereco_usuario)
+        
+        if not nome_logradouro or not numero_imovel:
+            logger.error(f"[GEOCODE] Nao conseguiu extrair rua/numero: {endereco_usuario}")
+            return None
+        
+        # PASSO 2: Reconstruir com APENAS rua, numero e Sao Paulo
+        endereco_com_sp = f"{nome_logradouro} {numero_imovel}, Sao Paulo"
         logger.info(f"[GEOCODE] Validando: '{endereco_com_sp}'")
         
-        # PASSO 2: Enviar para Google Geocoding com componentes SP|BR
+        # PASSO 3: Enviar para Google Geocoding com componentes SP|BR
         url = "https://maps.googleapis.com/maps/api/geocode/json"
         params = {
             "address": endereco_com_sp,
