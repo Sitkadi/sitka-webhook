@@ -155,15 +155,13 @@ def validar_e_geocodificar_endereco_sp(endereco_usuario):
     5. Retorna endereço formatado ou None se não for SP
     """
     try:
-        # PASSO 1: Extrair apenas rua e numero (remove pais/cidade anterior)
-        nome_logradouro, numero_imovel = extrair_nome_numero(endereco_usuario)
+        # PASSO 1: Pegar apenas ate primeira virgula (remove pais/cidade anterior)
+        endereco_limpo = endereco_usuario.strip()
+        if ',' in endereco_limpo:
+            endereco_limpo = endereco_limpo.split(',')[0].strip()
         
-        if not nome_logradouro or not numero_imovel:
-            logger.error(f"[GEOCODE] Nao conseguiu extrair rua/numero: {endereco_usuario}")
-            return None
-        
-        # PASSO 2: Reconstruir com APENAS rua, numero e Sao Paulo
-        endereco_com_sp = f"{nome_logradouro} {numero_imovel}, Sao Paulo"
+        # PASSO 2: Adicionar Sao Paulo no final
+        endereco_com_sp = f"{endereco_limpo}, Sao Paulo"
         logger.info(f"[GEOCODE] Validando: '{endereco_com_sp}'")
         
         # PASSO 3: Enviar para Google Geocoding com componentes SP|BR
