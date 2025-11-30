@@ -144,13 +144,18 @@ def enviar_imagem_wati(telefone, endereco):
         
         logger.info(f"[SATELLITE] Obtendo imagem para {endereco}")
         
-        # Forçar São Paulo, Brasil na busca
+        # Forçar São Paulo, Brasil na busca com bounding box
         endereco_completo = f"{endereco}, São Paulo, Brasil"
+        
+        # Bounding box de São Paulo (lat/lng)
+        # SW: -23.8245, -46.8134 | NE: -23.4273, -46.3569
+        bounds = "23.8245,-46.8134|23.4273,-46.3569"
         
         # Baixar a imagem do Google Maps
         url = "https://maps.googleapis.com/maps/api/staticmap"
         params = {
             "center": endereco_completo,
+            "bounds": bounds,
             "zoom": 18,
             "size": "600x600",
             "maptype": "satellite",
@@ -158,8 +163,17 @@ def enviar_imagem_wati(telefone, endereco):
             "key": GOOGLE_API_KEY
         }
         
+        # Primeiro tentar com bounding box
         response_img = requests.get(url, params=params, timeout=30)
-        logger.info(f"[SATELLITE] Google Maps: {response_img.status_code}")
+        logger.info(f"[SATELLITE] Google Maps (com bounds): {response_img.status_code}")
+        
+        # Se falhar, tentar sem bounding box
+        if response_img.status_code != 200:
+            logger.warning(f"[SATELLITE] Falha com bounds, tentando sem...")
+            del params['bounds']
+            response_img = requests.get(url, params=params, timeout=30)
+            logger.info(f"[SATELLITE] Google Maps (sem bounds): {response_img.status_code}")
+        
         response_img.raise_for_status()
         
         if not response_img.headers.get('content-type', '').startswith('image'):
