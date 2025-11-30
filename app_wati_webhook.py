@@ -39,6 +39,29 @@ IPTU_DATABASE = {
 }
 
 # ============================================================================
+# FUNÇÕES AUXILIARES
+# ============================================================================
+
+def decodificar_body(raw_data):
+    """
+    Tenta decodificar dados com múltiplos encodings
+    Prioridade: UTF-8 → Windows-1252 → Latin-1
+    """
+    encodings = ['utf-8', 'windows-1252', 'iso-8859-1', 'latin-1']
+    
+    for encoding in encodings:
+        try:
+            decoded = raw_data.decode(encoding)
+            logger.info(f"[ENCODING] ✅ Decodificado com {encoding}")
+            return decoded
+        except Exception as e:
+            logger.debug(f"[ENCODING] Tentativa {encoding} falhou: {str(e)}")
+            continue
+    
+    logger.error(f"[ENCODING] Falha em todos os encodings!")
+    return None
+
+# ============================================================================
 # HEALTH CHECK
 # ============================================================================
 
@@ -47,7 +70,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "13.0"
+        "version": "14.0"
     }), 200
 
 # ============================================================================
@@ -59,50 +82,67 @@ def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
     Aceita JSON ou form-urlencoded
+    Suporta múltiplos encodings (UTF-8, Windows-1252, Latin-1)
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
         logger.info(f"[IPTU] Content-Type: {request.content_type}")
+        logger.info(f"[IPTU] User-Agent: {request.headers.get('User-Agent', 'unknown')}")
         
         endereco = None
         
         # 1. Tenta JSON
         if request.is_json:
             logger.info(f"[IPTU] Recebendo como JSON")
-            data = request.get_json(force=True, silent=True)
-            if data:
-                endereco = data.get('endereco', '').strip()
+            try:
+                data = request.get_json(force=True, silent=True)
+                if data:
+                    endereco = data.get('endereco', '').strip()
+                    logger.info(f"[IPTU] JSON extraído: {endereco[:50]}...")
+            except Exception as e:
+                logger.warning(f"[IPTU] Erro ao processar JSON: {str(e)}")
         
         # 2. Tenta form-urlencoded via request.form
         if not endereco and request.form:
             logger.info(f"[IPTU] Recebendo como form-urlencoded (form)")
             endereco = request.form.get('endereco', '').strip()
+            logger.info(f"[IPTU] Form extraído: {endereco[:50]}...")
         
-        # 3. Tenta raw body
+        # 3. Tenta raw body com suporte a múltiplos encodings
         if not endereco and request.data:
             logger.info(f"[IPTU] Tentando raw body")
-            try:
-                raw = request.data.decode('utf-8')
-                logger.info(f"[IPTU] Raw body: {raw[:100]}...")
+            logger.info(f"[IPTU] Raw data length: {len(request.data)} bytes")
+            
+            # Decodificar com múltiplos encodings
+            raw = decodificar_body(request.data)
+            
+            if raw:
+                logger.info(f"[IPTU] Raw body (primeiros 100 chars): {raw[:100]}")
                 
                 # Se for form-urlencoded
                 if '=' in raw and not raw.startswith('{'):
                     logger.info(f"[IPTU] Detectado form-urlencoded")
-                    parsed = parse_qs(raw)
-                    logger.info(f"[IPTU] Parsed: {parsed}")
-                    if 'endereco' in parsed:
-                        endereco = parsed['endereco'][0].strip()
-                        logger.info(f"[IPTU] Extraído de form: {endereco}")
+                    try:
+                        parsed = parse_qs(raw)
+                        logger.info(f"[IPTU] Parsed keys: {list(parsed.keys())}")
+                        if 'endereco' in parsed:
+                            endereco = parsed['endereco'][0].strip()
+                            logger.info(f"[IPTU] Extraído de form: {endereco[:50]}...")
+                    except Exception as e:
+                        logger.error(f"[IPTU] Erro ao parsear form: {str(e)}")
                 
                 # Se for JSON
                 elif raw.startswith('{'):
-                    logger.info(f"[IPTU] Detectado JSON")
-                    import json
-                    data = json.loads(raw)
-                    endereco = data.get('endereco', '').strip()
-                    logger.info(f"[IPTU] Extraído de JSON: {endereco}")
-            except Exception as e:
-                logger.error(f"[IPTU] Erro ao processar raw body: {str(e)}")
+                    logger.info(f"[IPTU] Detectado JSON em raw body")
+                    try:
+                        import json
+                        data = json.loads(raw)
+                        endereco = data.get('endereco', '').strip()
+                        logger.info(f"[IPTU] Extraído de JSON raw: {endereco[:50]}...")
+                    except Exception as e:
+                        logger.error(f"[IPTU] Erro ao parsear JSON raw: {str(e)}")
+            else:
+                logger.error(f"[IPTU] Não foi possível decodificar raw body")
         
         logger.info(f"[IPTU] Endereço final: '{endereco}'")
         
