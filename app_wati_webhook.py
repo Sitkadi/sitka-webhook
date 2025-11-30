@@ -46,7 +46,7 @@ IPTU_DATABASE = {
 def decodificar_body(raw_data):
     """
     Tenta decodificar dados com múltiplos encodings
-    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252
+    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252 → Force com replace
     """
     if not raw_data:
         return None
@@ -62,8 +62,15 @@ def decodificar_body(raw_data):
             logger.debug(f"[ENCODING] Tentativa {encoding} falhou: {str(e)}")
             continue
     
-    logger.error(f"[ENCODING] ❌ Falha em todos os encodings!")
-    return None
+    # Se todos falharem, forçar com replace
+    logger.warning(f"[ENCODING] Todos os encodings falharam! Forçando com 'replace'...")
+    try:
+        decoded = raw_data.decode('utf-8', errors='replace')
+        logger.info(f"[ENCODING] ✅ Decodificado com UTF-8 + replace")
+        return decoded
+    except Exception as e:
+        logger.error(f"[ENCODING] ❌ Falha mesmo com replace: {str(e)}")
+        return None
 
 # ============================================================================
 # HEALTH CHECK
@@ -74,7 +81,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "16.0"
+        "version": "17.0"
     }), 200
 
 # ============================================================================
@@ -86,7 +93,7 @@ def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
     Aceita JSON ou form-urlencoded
-    Suporta múltiplos encodings (UTF-8, Windows-1252, Latin-1, CP1252)
+    Suporta múltiplos encodings com fallback para replace
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
