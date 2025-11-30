@@ -81,6 +81,7 @@ def carregar_iptu_csv():
 def consultar_iptu_csv(endereco):
     """
     Consulta IPTU no DataFrame carregado em memória
+    Tenta múltiplos formatos de número
     """
     global IPTU_DF
     
@@ -100,15 +101,24 @@ def consultar_iptu_csv(endereco):
             return None
         
         rua = partes[0].strip()
-        numero = partes[1].strip().split()[0]  # Pega primeiro token após vírgula
+        numero_raw = partes[1].strip().split()[0]  # Pega primeiro token após vírgula
         
-        logger.info(f"[IPTU_CSV] Buscando: Rua='{rua}', Número='{numero}'")
+        logger.info(f"[IPTU_CSV] Buscando: Rua='{rua}', Número='{numero_raw}'")
         
-        # Buscar no DataFrame
+        # Tentar com número original
         resultado = IPTU_DF[
             (IPTU_DF['NOME DE LOGRADOURO DO IMOVEL'].str.contains(rua, na=False, regex=False)) &
-            (IPTU_DF['NUMERO DO IMOVEL'] == numero)
+            (IPTU_DF['NUMERO DO IMOVEL'] == numero_raw)
         ]
+        
+        # Se não encontrar, tentar com padding de zeros (00013)
+        if resultado.empty and numero_raw.isdigit():
+            numero_padded = numero_raw.zfill(5)
+            logger.info(f"[IPTU_CSV] Tentando com padding: '{numero_padded}'")
+            resultado = IPTU_DF[
+                (IPTU_DF['NOME DE LOGRADOURO DO IMOVEL'].str.contains(rua, na=False, regex=False)) &
+                (IPTU_DF['NUMERO DO IMOVEL'] == numero_padded)
+            ]
         
         if not resultado.empty:
             linha = resultado.iloc[0]
@@ -120,10 +130,10 @@ def consultar_iptu_csv(endereco):
                     "metragem": float(metragem),
                     "endereco": linha['NOME DE LOGRADOURO DO IMOVEL'],
                     "numero": linha['NUMERO DO IMOVEL'],
-                    "bairro": linha['BAIRRO DO IMOVEL']
+                    "bairro": linha.get('BAIRRO DO IMOVEL', '')
                 }
         
-        logger.warning(f"[IPTU_CSV] Não encontrado: {rua}, {numero}")
+        logger.warning(f"[IPTU_CSV] Não encontrado: {rua}, {numero_raw}")
         return None
         
     except Exception as e:
@@ -149,7 +159,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "29.0",
+        "version": "32.0",
         "iptu_loaded": IPTU_DF is not None and len(IPTU_DF) > 0
     }), 200
 
