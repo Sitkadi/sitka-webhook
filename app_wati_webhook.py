@@ -151,14 +151,20 @@ def geocodificar_endereco_sp(endereco):
         if data['results']:
             result = data['results'][0]
             endereco_completo = result['formatted_address']
-            logger.info(f"[GEOCODE] ✅ {endereco} → {endereco_completo}")
-            return endereco_completo
+            
+            # Validar se está realmente em São Paulo
+            if "SP" in endereco_completo and "Brazil" in endereco_completo:
+                logger.info(f"[GEOCODE] ✅ {endereco} → {endereco_completo}")
+                return endereco_completo
+            else:
+                logger.warning(f"[GEOCODE] ⚠️ Endereço fora de SP: {endereco_completo}")
+                return None
         else:
             logger.warning(f"[GEOCODE] ⚠️ Não encontrado: {endereco}")
-            return f"{endereco}, São Paulo, Brasil"
+            return None
     except Exception as e:
         logger.error(f"[GEOCODE] Erro: {str(e)}")
-        return f"{endereco}, São Paulo, Brasil"
+        return None
 
 
 def enviar_imagem_wati(telefone, endereco):
@@ -172,6 +178,10 @@ def enviar_imagem_wati(telefone, endereco):
         
         # Geocodificar com componentes SP|BR
         endereco_completo = geocodificar_endereco_sp(endereco)
+        
+        if not endereco_completo:
+            logger.error(f"[SATELLITE] Endereço fora de São Paulo")
+            return False
         
         # Bounding box de São Paulo (lat/lng)
         # SW: -23.8245, -46.8134 | NE: -23.4273, -46.3569
