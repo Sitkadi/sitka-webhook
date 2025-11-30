@@ -8,12 +8,6 @@ from datetime import datetime
 from urllib.parse import parse_qs, unquote
 import re
 
-try:
-    import chardet
-    HAS_CHARDET = True
-except ImportError:
-    HAS_CHARDET = False
-
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
@@ -50,101 +44,65 @@ IPTU_DATABASE = {
 # FUNÇÕES AUXILIARES
 # ============================================================================
 
-def decodificar_body(raw_data):
+def extrair_endereco_raw(raw_data):
     """
-    Tenta decodificar dados com MÚLTIPLOS encodings
-    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252 → UTF-16 → chardet → Force com ignore/replace
+    Extrai endereço de QUALQUER formato de raw data
+    Tenta múltiplas estratégias de parsing
     """
     if not raw_data:
         return None
     
-    logger.info(f"[ENCODING] Raw data (hex): {raw_data[:100].hex()}")
-    logger.info(f"[ENCODING] Raw data length: {len(raw_data)} bytes")
+    logger.info(f"[RAW] Raw data length: {len(raw_data)} bytes")
+    logger.info(f"[RAW] Raw data (hex): {raw_data[:200].hex()}")
     
-    # Lista expandida de encodings (incluindo UTF-16 para PowerShell Admin)
-    encodings = [
-        'utf-8', 
-        'windows-1252', 
-        'iso-8859-1', 
-        'latin-1', 
-        'cp1252',
-        'utf-16',
-        'utf-16-le',
-        'utf-16-be',
-        'cp850',  # DOS
-        'cp437',  # DOS
-    ]
+    # Estratégia 1: Tentar decodificar com múltiplos encodings
+    decoded_str = None
+    encodings = ['utf-8', 'windows-1252', 'latin-1', 'cp1252', 'utf-16', 'utf-16-le']
     
-    # Tentar com cada encoding
     for encoding in encodings:
         try:
-            decoded = raw_data.decode(encoding)
-            logger.info(f"[ENCODING] ✅ Decodificado com {encoding}")
-            return decoded
-        except Exception as e:
-            logger.debug(f"[ENCODING] Tentativa {encoding} falhou: {str(e)}")
+            decoded_str = raw_data.decode(encoding)
+            logger.info(f"[RAW] ✅ Decodificado com {encoding}")
+            break
+        except:
             continue
     
-    # Se chardet está disponível, usar detecção automática
-    if HAS_CHARDET:
-        logger.warning(f"[ENCODING] Todos os encodings falharam! Usando chardet...")
+    # Se falhar, forçar com ignore
+    if not decoded_str:
         try:
-            detected = chardet.detect(raw_data)
-            if detected and detected.get('encoding'):
-                encoding = detected['encoding']
-                confidence = detected.get('confidence', 0)
-                logger.info(f"[ENCODING] chardet detectou: {encoding} (confiança: {confidence})")
-                try:
-                    decoded = raw_data.decode(encoding)
-                    logger.info(f"[ENCODING] ✅ Decodificado com {encoding} (chardet)")
-                    return decoded
-                except Exception as e:
-                    logger.warning(f"[ENCODING] chardet falhou: {str(e)}")
-        except Exception as e:
-            logger.warning(f"[ENCODING] Erro ao usar chardet: {str(e)}")
+            decoded_str = raw_data.decode('latin-1', errors='ignore')
+            logger.info(f"[RAW] ✅ Decodificado com latin-1 + ignore")
+        except:
+            logger.error(f"[RAW] ❌ Não conseguiu decodificar!")
+            return None
     
-    # Se todos falharem, forçar com ignore (remove caracteres inválidos)
-    logger.warning(f"[ENCODING] Forçando decodificação com latin-1 + ignore...")
-    try:
-        decoded = raw_data.decode('latin-1', errors='ignore')
-        logger.info(f"[ENCODING] ✅ Decodificado com latin-1 + ignore")
-        return decoded
-    except Exception as e:
-        logger.error(f"[ENCODING] ❌ Falha com latin-1 + ignore: {str(e)}")
+    logger.info(f"[RAW] Decoded string: {decoded_str[:200]}")
     
-    # Último recurso: UTF-8 com replace
-    logger.warning(f"[ENCODING] Último recurso: UTF-8 + replace...")
-    try:
-        decoded = raw_data.decode('utf-8', errors='replace')
-        logger.info(f"[ENCODING] ✅ Decodificado com UTF-8 + replace")
-        return decoded
-    except Exception as e:
-        logger.error(f"[ENCODING] ❌ Falha mesmo com UTF-8 + replace: {str(e)}")
-        return None
-
-
-def extrair_endereco_json(raw_str):
-    """
-    Extrai endereço de uma string JSON mesmo que malformada
-    """
-    try:
-        # Tentar parse normal
-        data = json.loads(raw_str)
-        if isinstance(data, dict) and 'endereco' in data:
-            return data.get('endereco', '').strip()
-    except:
-        pass
+    # Estratégia 2: Extrair com regex para JSON
+    if '{' in decoded_str:
+        # Tentar extrair endereco entre aspas
+        patterns = [
+            r'"endereco"\s*:\s*"([^"]*)"',  # "endereco": "..."
+            r"'endereco'\s*:\s*'([^']*)'",  # 'endereco': '...'
+            r'"endereco"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"',  # Com escape
+        ]
+        
+        for pattern in patterns:
+            match = re.search(pattern, decoded_str)
+            if match:
+                endereco = match.group(1).strip()
+                logger.info(f"[RAW] ✅ Extraído com regex: {endereco[:50]}...")
+                return endereco
     
-    # Tentar extração com regex
-    match = re.search(r'"endereco"\s*:\s*"([^"]*)"', raw_str)
-    if match:
-        return match.group(1).strip()
+    # Estratégia 3: Extrair com regex para form-urlencoded
+    if '=' in decoded_str:
+        match = re.search(r'endereco=([^&]*)', decoded_str)
+        if match:
+            endereco = unquote(match.group(1)).strip()
+            logger.info(f"[RAW] ✅ Extraído de form: {endereco[:50]}...")
+            return endereco
     
-    # Tentar com aspas simples
-    match = re.search(r"'endereco'\s*:\s*'([^']*)'", raw_str)
-    if match:
-        return match.group(1).strip()
-    
+    logger.warning(f"[RAW] Não conseguiu extrair endereço")
     return None
 
 # ============================================================================
@@ -156,7 +114,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "19.0"
+        "version": "20.0"
     }), 200
 
 # ============================================================================
@@ -167,8 +125,7 @@ def health():
 def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
-    Aceita JSON ou form-urlencoded
-    Suporta múltiplos encodings com detecção automática
+    Parsing RADICAL de QUALQUER formato
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
@@ -178,73 +135,29 @@ def obter_metragem_iptu():
         
         endereco = None
         
-        # 1. Tenta JSON via request.get_json()
-        if request.is_json or 'application/json' in (request.content_type or ''):
-            logger.info(f"[IPTU] Tentando JSON via get_json()")
+        # Estratégia 1: Tentar request.get_json()
+        try:
+            data = request.get_json(force=True, silent=True)
+            if data and isinstance(data, dict) and 'endereco' in data:
+                endereco = data.get('endereco', '').strip()
+                if endereco:
+                    logger.info(f"[IPTU] ✅ Extraído via get_json(): {endereco[:50]}...")
+        except Exception as e:
+            logger.debug(f"[IPTU] get_json() falhou: {str(e)}")
+        
+        # Estratégia 2: Tentar request.form
+        if not endereco:
             try:
-                data = request.get_json(force=True, silent=True)
-                if data and isinstance(data, dict):
-                    endereco = data.get('endereco', '').strip()
-                    if endereco:
-                        logger.info(f"[IPTU] ✅ JSON extraído: {endereco[:50]}...")
+                endereco = request.form.get('endereco', '').strip()
+                if endereco:
+                    logger.info(f"[IPTU] ✅ Extraído via form: {endereco[:50]}...")
             except Exception as e:
-                logger.warning(f"[IPTU] Erro ao processar JSON via get_json(): {str(e)}")
+                logger.debug(f"[IPTU] form falhou: {str(e)}")
         
-        # 2. Tenta form-urlencoded via request.form
-        if not endereco and request.form:
-            logger.info(f"[IPTU] Tentando form via request.form")
-            endereco = request.form.get('endereco', '').strip()
-            if endereco:
-                logger.info(f"[IPTU] ✅ Form extraído: {endereco[:50]}...")
-        
-        # 3. Tenta raw body com suporte a múltiplos encodings
+        # Estratégia 3: Parsing MANUAL do raw data
         if not endereco and request.data:
-            logger.info(f"[IPTU] Tentando raw body com decodificação")
-            
-            # Decodificar com múltiplos encodings
-            raw = decodificar_body(request.data)
-            
-            if raw:
-                logger.info(f"[IPTU] Raw body decodificado: {raw[:100]}")
-                
-                # Se for JSON
-                if raw.strip().startswith('{'):
-                    logger.info(f"[IPTU] Detectado JSON em raw body")
-                    
-                    # Tentar extração com regex (mais robusta)
-                    endereco = extrair_endereco_json(raw)
-                    if endereco:
-                        logger.info(f"[IPTU] ✅ Extraído de JSON raw (regex): {endereco[:50]}...")
-                    else:
-                        # Tentar parse normal
-                        try:
-                            data = json.loads(raw)
-                            endereco = data.get('endereco', '').strip()
-                            if endereco:
-                                logger.info(f"[IPTU] ✅ Extraído de JSON raw (parse): {endereco[:50]}...")
-                        except Exception as e:
-                            logger.error(f"[IPTU] Erro ao parsear JSON raw: {str(e)}")
-                
-                # Se for form-urlencoded
-                elif '=' in raw and not raw.startswith('{'):
-                    logger.info(f"[IPTU] Detectado form-urlencoded em raw body")
-                    try:
-                        # Parse manual para garantir que funcione
-                        parts = raw.split('=', 1)
-                        if len(parts) == 2 and parts[0].strip() == 'endereco':
-                            endereco = unquote(parts[1]).strip()
-                            logger.info(f"[IPTU] ✅ Extraído de form raw: {endereco[:50]}...")
-                        else:
-                            # Tentar com parse_qs como fallback
-                            parsed = parse_qs(raw)
-                            logger.info(f"[IPTU] Parsed keys: {list(parsed.keys())}")
-                            if 'endereco' in parsed and parsed['endereco']:
-                                endereco = parsed['endereco'][0].strip()
-                                logger.info(f"[IPTU] ✅ Extraído de parse_qs: {endereco[:50]}...")
-                    except Exception as e:
-                        logger.error(f"[IPTU] Erro ao parsear form: {str(e)}")
-            else:
-                logger.error(f"[IPTU] ❌ Não foi possível decodificar raw body com nenhum encoding")
+            logger.info(f"[IPTU] Tentando parsing manual do raw data...")
+            endereco = extrair_endereco_raw(request.data)
         
         logger.info(f"[IPTU] Endereço final: '{endereco}'")
         
@@ -307,7 +220,6 @@ def consultar_banco_local(endereco):
         if ' - ' in endereco_limpo:
             endereco_limpo = endereco_limpo.split(' - ')[0].strip()
         elif ',' in endereco_limpo:
-            # Manter a vírgula se houver
             partes = endereco_limpo.split(',')
             endereco_limpo = partes[0].strip()
             if len(partes) > 1 and partes[1].strip().isdigit():
