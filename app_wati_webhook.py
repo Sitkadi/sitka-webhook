@@ -8,6 +8,12 @@ from datetime import datetime
 from urllib.parse import parse_qs, unquote
 import re
 
+try:
+    import chardet
+    HAS_CHARDET = True
+except ImportError:
+    HAS_CHARDET = False
+
 # ============================================================================
 # CONFIGURAÇÃO
 # ============================================================================
@@ -47,10 +53,13 @@ IPTU_DATABASE = {
 def decodificar_body(raw_data):
     """
     Tenta decodificar dados com MÚLTIPLOS encodings
-    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252 → UTF-16 → Force com replace
+    Prioridade: UTF-8 → Windows-1252 → Latin-1 → CP1252 → UTF-16 → chardet → Force com ignore/replace
     """
     if not raw_data:
         return None
+    
+    logger.info(f"[ENCODING] Raw data (hex): {raw_data[:100].hex()}")
+    logger.info(f"[ENCODING] Raw data length: {len(raw_data)} bytes")
     
     # Lista expandida de encodings (incluindo UTF-16 para PowerShell Admin)
     encodings = [
@@ -66,6 +75,7 @@ def decodificar_body(raw_data):
         'cp437',  # DOS
     ]
     
+    # Tentar com cada encoding
     for encoding in encodings:
         try:
             decoded = raw_data.decode(encoding)
@@ -75,14 +85,41 @@ def decodificar_body(raw_data):
             logger.debug(f"[ENCODING] Tentativa {encoding} falhou: {str(e)}")
             continue
     
-    # Se todos falharem, forçar com replace
-    logger.warning(f"[ENCODING] Todos os encodings falharam! Forçando com 'replace'...")
+    # Se chardet está disponível, usar detecção automática
+    if HAS_CHARDET:
+        logger.warning(f"[ENCODING] Todos os encodings falharam! Usando chardet...")
+        try:
+            detected = chardet.detect(raw_data)
+            if detected and detected.get('encoding'):
+                encoding = detected['encoding']
+                confidence = detected.get('confidence', 0)
+                logger.info(f"[ENCODING] chardet detectou: {encoding} (confiança: {confidence})")
+                try:
+                    decoded = raw_data.decode(encoding)
+                    logger.info(f"[ENCODING] ✅ Decodificado com {encoding} (chardet)")
+                    return decoded
+                except Exception as e:
+                    logger.warning(f"[ENCODING] chardet falhou: {str(e)}")
+        except Exception as e:
+            logger.warning(f"[ENCODING] Erro ao usar chardet: {str(e)}")
+    
+    # Se todos falharem, forçar com ignore (remove caracteres inválidos)
+    logger.warning(f"[ENCODING] Forçando decodificação com latin-1 + ignore...")
+    try:
+        decoded = raw_data.decode('latin-1', errors='ignore')
+        logger.info(f"[ENCODING] ✅ Decodificado com latin-1 + ignore")
+        return decoded
+    except Exception as e:
+        logger.error(f"[ENCODING] ❌ Falha com latin-1 + ignore: {str(e)}")
+    
+    # Último recurso: UTF-8 com replace
+    logger.warning(f"[ENCODING] Último recurso: UTF-8 + replace...")
     try:
         decoded = raw_data.decode('utf-8', errors='replace')
         logger.info(f"[ENCODING] ✅ Decodificado com UTF-8 + replace")
         return decoded
     except Exception as e:
-        logger.error(f"[ENCODING] ❌ Falha mesmo com replace: {str(e)}")
+        logger.error(f"[ENCODING] ❌ Falha mesmo com UTF-8 + replace: {str(e)}")
         return None
 
 
@@ -119,7 +156,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "18.0"
+        "version": "19.0"
     }), 200
 
 # ============================================================================
@@ -131,14 +168,13 @@ def obter_metragem_iptu():
     """
     Endpoint para obter metragem de IPTU pelo endereço
     Aceita JSON ou form-urlencoded
-    Suporta múltiplos encodings (incluindo PowerShell Admin)
+    Suporta múltiplos encodings com detecção automática
     """
     try:
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
         logger.info(f"[IPTU] Content-Type: {request.content_type}")
         logger.info(f"[IPTU] User-Agent: {request.headers.get('User-Agent', 'unknown')}")
         logger.info(f"[IPTU] Request data length: {len(request.data)} bytes")
-        logger.info(f"[IPTU] Raw data (hex): {request.data[:100].hex()}")
         
         endereco = None
         
