@@ -7,6 +7,8 @@ from flask import Flask, request, jsonify
 from datetime import datetime
 from urllib.parse import parse_qs, unquote
 import re
+import tempfile
+import io
 
 # ============================================================================
 # CONFIGURAÇÃO
@@ -22,6 +24,9 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', 'AIzaSyB56fOrhU0MUwtFp7s7qseKzMTml0rCMjY')
+WATI_API_TOKEN = os.getenv('WATI_API_TOKEN', '')
+WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '1047617')
+WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 
 # ============================================================================
 # BANCO DE DADOS LOCAL DE IPTU
@@ -51,7 +56,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "25.0"
+        "version": "27.0"
     }), 200
 
 # ============================================================================
@@ -211,49 +216,63 @@ def consultar_banco_local(endereco):
 # ANÁLISE DE IMAGEM DE SATÉLITE
 # ============================================================================
 
-def enviar_imagem_wati(telefone, url_imagem, caption=""):
+def enviar_imagem_wati(telefone, endereco):
     """
-    Envia imagem para o WhatsApp via WATI API
+    Envia imagem de satélite para o WhatsApp via WATI API (sendSessionFile)
+    Replica a lógica da versão offline (v42)
     """
     try:
-        wati_token = os.getenv('WATI_API_TOKEN')
-        wati_tenant_id = os.getenv('WATI_TENANT_ID')
-        wati_base_url = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
+        # Formatar telefone
+        phone = telefone.replace(" ", "").replace("-", "")
+        if not phone.startswith("+"):
+            phone = "+" + phone
         
-        if not wati_token or not wati_tenant_id:
-            logger.error("[WATI] Token ou Tenant ID não configurado")
+        logger.info(f"[SATELLITE] Passo 1: Obtendo imagem de satélite para {endereco}")
+        
+        # Baixar a imagem do Google Maps
+        url = "https://maps.googleapis.com/maps/api/staticmap"
+        params = {
+            "center": endereco,
+            "zoom": 18,
+            "size": "600x600",
+            "maptype": "satellite",
+            "markers": f"color:red|{endereco}",
+            "key": GOOGLE_API_KEY
+        }
+        
+        response_img = requests.get(url, params=params, timeout=30)
+        logger.info(f"[SATELLITE] Google Maps Response: {response_img.status_code}")
+        response_img.raise_for_status()
+        
+        if not response_img.headers.get('content-type', '').startswith('image'):
+            logger.error("[SATELLITE] Resposta não é uma imagem")
             return False
         
-        # Formatar telefone para WATI (remover caracteres especiais)
-        telefone_limpo = ''.join(filter(str.isdigit, telefone))
+        # Enviar a imagem via WATI API (sendSessionFile)
+        logger.info(f"[SATELLITE] Passo 2: Enviando imagem via WATI para {phone}")
         
-        # URL da API WATI para enviar imagem
-        url_api = f"{wati_base_url}/api/v1/sendMediaMessage"
+        headers = {"Authorization": f"Bearer {WATI_API_TOKEN}"}
+        url_session = f"{WATI_BASE_URL}/{WATI_TENANT_ID}/api/v1/sendSessionFile/{phone}"
         
-        headers = {
-            "Authorization": f"Bearer {wati_token}",
-            "Content-Type": "application/json"
-        }
+        logger.info(f"[SATELLITE] URL WATI: {url_session}")
         
-        payload = {
-            "phoneNumber": telefone_limpo,
-            "mediaUrl": url_imagem,
-            "caption": caption or "Imagem de satélite do seu terreno"
-        }
+        files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
+        data = {'caption': f'Imagem de satélite para: {endereco}'}
         
-        logger.info(f"[WATI] Enviando imagem para {telefone_limpo}")
-        logger.info(f"[WATI] URL: {url_api}")
-        logger.info(f"[WATI] Payload: {payload}")
+        response_session = requests.post(url_session, headers=headers, files=files, data=data, timeout=30)
         
-        response = requests.post(url_api, json=payload, headers=headers, timeout=30)
+        logger.info(f"[SATELLITE] Resposta do envio: {response_session.status_code}")
+        logger.info(f"[SATELLITE] Detalhes: {response_session.text[:200]}")
         
-        logger.info(f"[WATI] Status: {response.status_code}")
-        logger.info(f"[WATI] Response: {response.text[:200]}")
-        
-        return response.status_code in [200, 201]
+        if response_session.status_code in [200, 201]:
+            logger.info(f"[SATELLITE] ✅ Imagem enviada com sucesso!")
+            return True
+        else:
+            logger.warning(f"[SATELLITE] ⚠️ Falha ao enviar (status {response_session.status_code})")
+            return False
         
     except Exception as e:
-        logger.error(f"[WATI] Erro ao enviar imagem: {str(e)}")
+        logger.error(f"[SATELLITE] Erro no processo: {str(e)}")
         return False
 
 
@@ -261,57 +280,34 @@ def enviar_imagem_wati(telefone, url_imagem, caption=""):
 def analise_imagemdesatelite():
     """
     Endpoint para enviar imagem de satélite via WATI
+    Replica a lógica da versão offline (v42)
     """
     try:
         data = request.get_json(force=True, silent=True) or {}
         telefone = data.get('telefone', '').strip()
         endereco = data.get('endereco', '').strip()
         
+        logger.info(f"[SATELLITE] ===== NOVA REQUISIÇÃO =====")
         logger.info(f"[SATELLITE] Telefone: {telefone}, Endereço: {endereco}")
         
         if not telefone or not endereco:
+            logger.error("[SATELLITE] Telefone ou endereço não fornecido")
             return jsonify({"sucesso": False, "erro": "Telefone ou endereço não fornecido"}), 400
         
-        # Gerar URL da imagem de satélite do Google Maps
-        # Formato: https://maps.googleapis.com/maps/api/staticmap?center=ADDRESS&zoom=18&size=600x400&maptype=satellite&key=API_KEY
+        # Enviar a imagem
+        sucesso = enviar_imagem_wati(telefone, endereco)
         
-        try:
-            # Substituir espaços por + para a URL
-            endereco_encoded = endereco.replace(' ', '+')
-            
-            satellite_url = f"https://maps.googleapis.com/maps/api/staticmap?center={endereco_encoded}&zoom=18&size=600x400&maptype=satellite&key={GOOGLE_API_KEY}"
-            
-            logger.info(f"[SATELLITE] URL gerada: {satellite_url[:80]}...")
-            
-            # Tentar enviar a imagem via WATI
-            sucesso_wati = enviar_imagem_wati(telefone, satellite_url, f"Satélite: {endereco}")
-            
-            if sucesso_wati:
-                logger.info(f"[SATELLITE] ✅ Imagem enviada com sucesso via WATI")
-                return jsonify({
-                    "sucesso": True,
-                    "mensagem": "Imagem de satélite enviada com sucesso",
-                    "imagemdesatelite_url": satellite_url,
-                    "telefone": telefone,
-                    "endereco": endereco,
-                    "wati_enviado": True
-                }), 200
-            else:
-                logger.warning(f"[SATELLITE] ⚠️ Falha ao enviar via WATI, retornando URL")
-                return jsonify({
-                    "sucesso": True,
-                    "mensagem": "URL de satélite gerada (envio via WATI falhou)",
-                    "imagemdesatelite_url": satellite_url,
-                    "telefone": telefone,
-                    "endereco": endereco,
-                    "wati_enviado": False
-                }), 200
-            
-        except Exception as e:
-            logger.error(f"[SATELLITE] Erro ao gerar URL: {str(e)}")
+        if sucesso:
+            return jsonify({
+                "sucesso": True,
+                "mensagem": "Imagem de satélite enviada com sucesso",
+                "telefone": telefone,
+                "endereco": endereco
+            }), 200
+        else:
             return jsonify({
                 "sucesso": False,
-                "erro": f"Erro ao gerar imagem: {str(e)}"
+                "erro": "Falha ao enviar imagem via WATI"
             }), 500
         
     except Exception as e:
