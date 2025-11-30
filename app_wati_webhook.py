@@ -70,7 +70,7 @@ def health():
     return jsonify({
         "service": "SITKA Webhook",
         "status": "ok",
-        "version": "14.0"
+        "version": "15.0"
     }), 200
 
 # ============================================================================
@@ -88,46 +88,53 @@ def obter_metragem_iptu():
         logger.info(f"[IPTU] ===== NOVA REQUISIÇÃO =====")
         logger.info(f"[IPTU] Content-Type: {request.content_type}")
         logger.info(f"[IPTU] User-Agent: {request.headers.get('User-Agent', 'unknown')}")
+        logger.info(f"[IPTU] Request data length: {len(request.data)} bytes")
         
         endereco = None
         
         # 1. Tenta JSON
-        if request.is_json:
-            logger.info(f"[IPTU] Recebendo como JSON")
+        if request.is_json or 'application/json' in (request.content_type or ''):
+            logger.info(f"[IPTU] Tentando JSON")
             try:
                 data = request.get_json(force=True, silent=True)
                 if data:
                     endereco = data.get('endereco', '').strip()
-                    logger.info(f"[IPTU] JSON extraído: {endereco[:50]}...")
+                    logger.info(f"[IPTU] ✅ JSON extraído: {endereco[:50] if endereco else 'vazio'}...")
             except Exception as e:
                 logger.warning(f"[IPTU] Erro ao processar JSON: {str(e)}")
         
         # 2. Tenta form-urlencoded via request.form
         if not endereco and request.form:
-            logger.info(f"[IPTU] Recebendo como form-urlencoded (form)")
+            logger.info(f"[IPTU] Tentando form via request.form")
             endereco = request.form.get('endereco', '').strip()
-            logger.info(f"[IPTU] Form extraído: {endereco[:50]}...")
+            logger.info(f"[IPTU] Form extraído: {endereco[:50] if endereco else 'vazio'}...")
         
         # 3. Tenta raw body com suporte a múltiplos encodings
         if not endereco and request.data:
             logger.info(f"[IPTU] Tentando raw body")
-            logger.info(f"[IPTU] Raw data length: {len(request.data)} bytes")
             
             # Decodificar com múltiplos encodings
             raw = decodificar_body(request.data)
             
             if raw:
-                logger.info(f"[IPTU] Raw body (primeiros 100 chars): {raw[:100]}")
+                logger.info(f"[IPTU] Raw body: {raw[:100]}")
                 
                 # Se for form-urlencoded
                 if '=' in raw and not raw.startswith('{'):
-                    logger.info(f"[IPTU] Detectado form-urlencoded")
+                    logger.info(f"[IPTU] Detectado form-urlencoded em raw body")
                     try:
-                        parsed = parse_qs(raw)
-                        logger.info(f"[IPTU] Parsed keys: {list(parsed.keys())}")
-                        if 'endereco' in parsed:
-                            endereco = parsed['endereco'][0].strip()
-                            logger.info(f"[IPTU] Extraído de form: {endereco[:50]}...")
+                        # Parse manual para garantir que funcione
+                        parts = raw.split('=', 1)
+                        if len(parts) == 2 and parts[0].strip() == 'endereco':
+                            endereco = unquote(parts[1]).strip()
+                            logger.info(f"[IPTU] ✅ Extraído de form raw: {endereco[:50]}...")
+                        else:
+                            # Tentar com parse_qs como fallback
+                            parsed = parse_qs(raw)
+                            logger.info(f"[IPTU] Parsed keys: {list(parsed.keys())}")
+                            if 'endereco' in parsed and parsed['endereco']:
+                                endereco = parsed['endereco'][0].strip()
+                                logger.info(f"[IPTU] ✅ Extraído de parse_qs: {endereco[:50]}...")
                     except Exception as e:
                         logger.error(f"[IPTU] Erro ao parsear form: {str(e)}")
                 
@@ -138,7 +145,7 @@ def obter_metragem_iptu():
                         import json
                         data = json.loads(raw)
                         endereco = data.get('endereco', '').strip()
-                        logger.info(f"[IPTU] Extraído de JSON raw: {endereco[:50]}...")
+                        logger.info(f"[IPTU] ✅ Extraído de JSON raw: {endereco[:50]}...")
                     except Exception as e:
                         logger.error(f"[IPTU] Erro ao parsear JSON raw: {str(e)}")
             else:
