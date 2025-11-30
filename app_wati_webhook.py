@@ -24,28 +24,31 @@ WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
 PORT = int(os.getenv('PORT', 10000))
 
 # Banco de dados local com endereços reais de São Paulo
+# IMPORTANTE: Todos os endereços devem ter NOME + NÚMERO
 IPTU_DATABASE = {
+    # Avenida Paulista
     "avenida paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "avenida paulista": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     "paulista 1000": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
-    "paulista": {"metragem": 2500, "endereco": "Avenida Paulista, 1000", "sql": "SP001"},
     
+    # Rua Oscar Freire
     "rua oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
-    "oscar freire": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
+    "oscar freire 500": {"metragem": 1800, "endereco": "Rua Oscar Freire, 500", "sql": "SP002"},
     
+    # Avenida Brasil
     "avenida brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
-    "avenida brasil": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
     "brasil 2000": {"metragem": 3200, "endereco": "Avenida Brasil, 2000", "sql": "SP003"},
     
+    # Rua Augusta
     "rua augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "rua augusta": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
-    "augusta": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
+    "augusta 800": {"metragem": 1500, "endereco": "Rua Augusta, 800", "sql": "SP004"},
     
+    # Avenida Imigrantes
     "avenida imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
-    "imigrantes": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
+    "imigrantes 3000": {"metragem": 4100, "endereco": "Avenida Imigrantes, 3000", "sql": "SP005"},
     
+    # Rua 25 de Março
     "rua 25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
-    "25 de marco": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
+    "25 de marco 1500": {"metragem": 2200, "endereco": "Rua 25 de Março, 1500", "sql": "SP006"},
 }
 
 # ============================================================================
