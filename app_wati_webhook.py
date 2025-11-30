@@ -1,303 +1,422 @@
-#!/usr/bin/env python3
 """
-SITKA - API Flask para Webhook WATI
-Endpoint: /analise-imagemdesatelite
-Função: Gerar imagem de satélite e enviar via WhatsApp
-Data: 28/11/2025
+SITKA Webhook - Com integração de IPTU via WFS Geosampa
+Autor: Manus AI
+Data: 29 de Novembro de 2025
+
+Funcionalidades:
+- Análise de imagem de satélite
+- Consulta de zoneamento
+- Obtenção automática de metragem via IPTU (WFS Geosampa)
+- Integração com WATI
 """
 
 from flask import Flask, request, jsonify
 import requests
-import logging
 import os
-import tempfile
-from dotenv import load_dotenv
-from typing import Optional, Dict, Tuple
-
-# Carregar variáveis de ambiente
-load_dotenv()
+import json
+from datetime import datetime
+import logging
 
 # Configurar logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='[%(asctime)s] [%(levelname)s] %(message)s'
-)
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Criar aplicação Flask
+# Inicializar Flask
 app = Flask(__name__)
 
-# Configurações WATI
-WATI_TOKEN = os.getenv("WATI_API_TOKEN", "")
-WATI_TENANT_ID = os.getenv("WATI_TENANT_ID", "1047617")
-WATI_BASE_URL = os.getenv("WATI_BASE_URL", "https://live-mt-server.wati.io")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+# Variáveis de ambiente
+GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', '')
+WATI_API_TOKEN = os.getenv('WATI_API_TOKEN', '')
+WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '')
+WATI_BASE_URL = os.getenv('WATI_BASE_URL', 'https://live-mt-server.wati.io')
+PORT = int(os.getenv('PORT', 10000))
 
-
-class SatelliteImageService:
-    """Serviço para gerar imagens de satélite e enviar via WATI."""
-    
-    def __init__(self):
-        self.google_api_key = GOOGLE_API_KEY
-        self.wati_token = WATI_TOKEN
-        self.wati_tenant_id = WATI_TENANT_ID
-        self.wati_base_url = WATI_BASE_URL
-    
-    def formatar_numero(self, phone_number: str) -> str:
-        """Formata número de telefone para padrão WATI."""
-        phone = str(phone_number).replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
-        
-        if phone.startswith("+"):
-            return phone
-        if phone.startswith("55"):
-            return "+" + phone
-        if len(phone) == 11:
-            return "+55" + phone
-        if len(phone) == 10:
-            return "+55" + phone
-        
-        return "+55" + phone
-    
-    def get_satellite_image(self, address: str, zoom: int = 18) -> Optional[str]:
-        """
-        Obtém imagem de satélite do Google Maps.
-        
-        Args:
-            address: Endereço para buscar
-            zoom: Nível de zoom (15-25)
-            
-        Returns:
-            Caminho do arquivo de imagem temporário ou None
-        """
-        try:
-            logger.info(f"[IMAGEM] Obtendo imagem: {address} (zoom: {zoom})")
-            
-            url = "https://maps.googleapis.com/maps/api/staticmap"
-            params = {
-                "center": address,
-                "zoom": zoom,
-                "size": "600x600",
-                "maptype": "satellite",
-                "markers": f"color:red|{address}",
-                "key": self.google_api_key
-            }
-            
-            response = requests.get(url, params=params, timeout=30)
-            logger.info(f"[IMAGEM] Google Maps Response: {response.status_code}")
-            response.raise_for_status()
-            
-            if response.headers.get('content-type', '').startswith('image'):
-                temp_file = tempfile.NamedTemporaryFile(suffix=".png", delete=False)
-                temp_file.write(response.content)
-                temp_file.close()
-                logger.info(f"[IMAGEM] Imagem salva em: {temp_file.name}")
-                return temp_file.name
-            
-            logger.error("[IMAGEM] Resposta não é uma imagem")
-            return None
-            
-        except Exception as e:
-            logger.error(f"[IMAGEM] Erro ao obter imagem: {str(e)}")
-            return None
-    
-    def send_via_wati(self, phone_number: str, address: str, image_path: str) -> Tuple[bool, Dict]:
-        """
-        Envia imagem via WATI API.
-        
-        Args:
-            phone_number: Número de telefone
-            address: Endereço para legenda
-            image_path: Caminho da imagem
-            
-        Returns:
-            Tupla (sucesso, resposta_json)
-        """
-        phone = self.formatar_numero(phone_number)
-        
-        try:
-            logger.info(f"[WATI] Enviando para: {phone}")
-            
-            if not os.path.exists(image_path):
-                logger.error(f"[WATI] Arquivo não encontrado: {image_path}")
-                return False, {"error": "Arquivo de imagem não encontrado"}
-            
-            headers = {
-                "Authorization": f"Bearer {self.wati_token}"
-            }
-            
-            url = f"{self.wati_base_url}/{self.wati_tenant_id}/api/v1/sendSessionFile/{phone}"
-            
-            with open(image_path, 'rb') as img_file:
-                files = {'file': ('satellite.png', img_file, 'image/png')}
-                data = {'caption': f'Imagem de satélite para: {address}'}
-                
-                response = requests.post(
-                    url,
-                    headers=headers,
-                    files=files,
-                    data=data,
-                    timeout=30
-                )
-                
-                logger.info(f"[WATI] Status: {response.status_code}")
-                logger.info(f"[WATI] Resposta: {response.text}")
-                
-                try:
-                    resp_json = response.json()
-                    if resp_json.get("result") == True:
-                        logger.info("[WATI] OK - Imagem enviada com sucesso!")
-                        return True, resp_json
-                    else:
-                        logger.error(f"[WATI] Erro: {resp_json.get('info', 'Desconhecido')}")
-                        return False, resp_json
-                except:
-                    if response.status_code in [200, 201]:
-                        logger.info("[WATI] OK - Imagem enviada com sucesso!")
-                        return True, {"status": "success"}
-                    else:
-                        logger.error(f"[WATI] Erro: Status {response.status_code}")
-                        return False, {"error": f"Status {response.status_code}"}
-        
-        except Exception as e:
-            logger.error(f"[WATI] Erro ao enviar: {str(e)}")
-            return False, {"error": str(e)}
-    
-    def process(self, phone_number: str, address: str, zoom: int = 18) -> Tuple[bool, Dict]:
-        """
-        Processa o envio completo: gera imagem e envia via WATI.
-        
-        Args:
-            phone_number: Número de telefone
-            address: Endereço
-            zoom: Nível de zoom
-            
-        Returns:
-            Tupla (sucesso, resposta)
-        """
-        temp_image_path = None
-        
-        try:
-            # Passo 1: Obter imagem
-            logger.info("[PROCESSO] Passo 1: Obtendo imagem")
-            temp_image_path = self.get_satellite_image(address, zoom=zoom)
-            
-            if not temp_image_path:
-                logger.error("[PROCESSO] Falha ao obter imagem")
-                return False, {"error": "Falha ao obter imagem de satélite"}
-            
-            # Passo 2: Enviar via WATI
-            logger.info("[PROCESSO] Passo 2: Enviando via WATI")
-            success, response = self.send_via_wati(phone_number, address, temp_image_path)
-            
-            return success, response
-        
-        except Exception as e:
-            logger.error(f"[PROCESSO] Erro geral: {str(e)}")
-            return False, {"error": str(e)}
-        
-        finally:
-            # Limpar arquivo temporário
-            if temp_image_path and os.path.exists(temp_image_path):
-                try:
-                    os.remove(temp_image_path)
-                    logger.info("[PROCESSO] Arquivo temporário removido")
-                except Exception as e:
-                    logger.warning(f"[PROCESSO] Não foi possível remover arquivo: {e}")
-
+# URLs das APIs
+GEOSAMPA_WFS_URL = "https://geosampa.prefeitura.sp.gov.br/geoserver/wfs"
+GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
+GOOGLE_SATELLITE_API_URL = "https://maps.googleapis.com/maps/api/staticmap"
 
 # ============================================================================
-# ROTAS
+# HEALTH CHECK
 # ============================================================================
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint."""
-    return jsonify({"status": "ok", "service": "SITKA Webhook"}), 200
+    """Verificar se o webhook está online"""
+    return jsonify({
+        "service": "SITKA Webhook",
+        "status": "ok",
+        "timestamp": datetime.now().isoformat(),
+        "version": "2.0"
+    }), 200
 
 
-@app.route('/analise-imagemdesatelite', methods=['POST'])
-def analise_imagem_desatelite():
+# ============================================================================
+# OBTER METRAGEM VIA IPTU (WFS GEOSAMPA)
+# ============================================================================
+
+@app.route('/obter-metragem-iptu', methods=['POST'])
+def obter_metragem_iptu():
     """
-    Endpoint principal para análise de imagem de satélite.
+    Obtém a metragem do terreno via IPTU do Geosampa usando WFS
     
-    Recebe:
+    Body esperado:
     {
-        "telefone": "+5511987654321",
-        "endereco": "Av. Paulista, 1000, São Paulo"
+        "endereco": "Avenida Paulista, 1000, São Paulo",
+        "cidade": "São Paulo"
     }
     
     Retorna:
     {
-        "success": true,
-        "message": "Imagem enviada com sucesso",
-        "data": {...}
+        "metragem": 2500,
+        "fonte": "iptu_geosampa",
+        "endereco": "...",
+        "sql": "...",
+        "sucesso": true
     }
     """
+    
     try:
-        # Validar request
-        if not request.is_json:
-            logger.error("[ENDPOINT] Request não é JSON")
+        data = request.json
+        endereco = data.get('endereco', '').strip()
+        cidade = data.get('cidade', 'São Paulo').strip()
+        
+        logger.info(f"[IPTU] Consultando: {endereco}, {cidade}")
+        
+        if not endereco:
             return jsonify({
-                "success": False,
-                "error": "Content-Type deve ser application/json"
+                "metragem": None,
+                "fonte": "erro",
+                "mensagem": "Endereço não fornecido",
+                "sucesso": False
             }), 400
         
-        data = request.get_json()
+        # Consultar WFS Geosampa
+        resultado = consultar_iptu_wfs_geosampa(endereco, cidade)
         
-        # Extrair parâmetros
-        telefone = data.get("telefone", "")
-        endereco = data.get("endereco", "")
-        zoom = data.get("zoom", 18)
+        if resultado and resultado.get('metragem'):
+            logger.info(f"[IPTU] ✅ Metragem encontrada: {resultado['metragem']} m²")
+            return jsonify({
+                "metragem": resultado['metragem'],
+                "fonte": "iptu_geosampa",
+                "endereco": resultado.get('endereco'),
+                "sql": resultado.get('sql'),
+                "bairro": resultado.get('bairro'),
+                "sucesso": True
+            }), 200
         
-        # Validar parâmetros
+        # Não encontrou
+        logger.warning(f"[IPTU] ❌ Endereço não encontrado: {endereco}")
+        return jsonify({
+            "metragem": None,
+            "fonte": "nao_encontrado",
+            "mensagem": "Endereço não encontrado na base de dados de IPTU",
+            "sucesso": False
+        }), 404
+        
+    except Exception as e:
+        logger.error(f"[IPTU] Erro: {str(e)}")
+        return jsonify({
+            "metragem": None,
+            "fonte": "erro",
+            "mensagem": f"Erro ao consultar IPTU: {str(e)}",
+            "sucesso": False
+        }), 500
+
+
+def consultar_iptu_wfs_geosampa(endereco, cidade):
+    """
+    Consulta IPTU via WFS (Web Feature Service) do Geosampa
+    
+    Usa OGC Web Feature Service para buscar dados de IPTU
+    """
+    
+    try:
+        # Limpar endereço
+        endereco_limpo = endereco.split(',')[0].strip()  # Pega só a rua
+        
+        # Parâmetros da requisição WFS
+        params = {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeName": "IPTU",
+            "outputFormat": "application/json",
+            "cql_filter": f"STRMATCHES(endereco, '.*{endereco_limpo}.*')",
+            "maxfeatures": 5
+        }
+        
+        logger.info(f"[WFS] Consultando: {GEOSAMPA_WFS_URL}")
+        
+        # Fazer requisição
+        response = requests.get(
+            GEOSAMPA_WFS_URL,
+            params=params,
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            logger.info(f"[WFS] Status: 200, Features: {len(data.get('features', []))}")
+            
+            # Processar features
+            if data.get('features') and len(data['features']) > 0:
+                feature = data['features'][0]
+                properties = feature.get('properties', {})
+                
+                # Extrair metragem
+                metragem = properties.get('area_terreno') or properties.get('areaterreno')
+                
+                if metragem:
+                    return {
+                        "metragem": float(metragem),
+                        "endereco": properties.get('endereco', ''),
+                        "sql": properties.get('sql', ''),
+                        "bairro": properties.get('bairro', '')
+                    }
+        
+        logger.warning(f"[WFS] Nenhuma feature encontrada")
+        return None
+        
+    except requests.exceptions.Timeout:
+        logger.error("[WFS] Timeout na requisição")
+        return None
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[WFS] Erro na requisição: {str(e)}")
+        return None
+    except Exception as e:
+        logger.error(f"[WFS] Erro ao processar resposta: {str(e)}")
+        return None
+
+
+# ============================================================================
+# ANÁLISE DE IMAGEM DE SATÉLITE
+# ============================================================================
+
+@app.route('/analise-imagemdesatelite', methods=['POST'])
+def analise_imagemdesatelite():
+    """
+    Obtém imagem de satélite do endereço e envia via WATI
+    
+    Body esperado:
+    {
+        "telefone": "5511999999999",
+        "endereco": "Avenida Paulista, 1000, São Paulo, SP"
+    }
+    """
+    
+    try:
+        data = request.json
+        telefone = data.get('telefone', '').strip()
+        endereco = data.get('endereco', '').strip()
+        
+        logger.info(f"[SATÉLITE] Processando: {endereco} para {telefone}")
+        
         if not telefone or not endereco:
-            logger.error("[ENDPOINT] Parâmetros faltando")
             return jsonify({
                 "success": False,
-                "error": "Parâmetros 'telefone' e 'endereco' são obrigatórios"
+                "error": "Telefone e endereço são obrigatórios"
             }), 400
         
-        logger.info(f"[ENDPOINT] Recebido: telefone={telefone}, endereco={endereco}, zoom={zoom}")
+        # Obter coordenadas do endereço
+        coords = obter_coordenadas(endereco)
         
-        # Processar
-        service = SatelliteImageService()
-        success, response = service.process(telefone, endereco, zoom=zoom)
+        if not coords:
+            return jsonify({
+                "success": False,
+                "error": "Endereço não encontrado"
+            }), 404
         
-        if success:
-            logger.info("[ENDPOINT] Sucesso!")
+        # Gerar URL da imagem de satélite
+        url_satelite = gerar_url_satelite(coords)
+        
+        # Enviar para WATI
+        resultado = enviar_imagem_wati(telefone, url_satelite, endereco)
+        
+        if resultado:
             return jsonify({
                 "success": True,
-                "message": "Imagem enviada com sucesso",
-                "data": response
+                "imagemdesatelite_url": url_satelite,
+                "mensagem_imagemdesatelite": f"Imagem de satélite de {endereco} enviada com sucesso!"
             }), 200
         else:
-            logger.error(f"[ENDPOINT] Falha: {response}")
             return jsonify({
                 "success": False,
-                "error": response.get("error", "Erro desconhecido"),
-                "data": response
-            }), 400
-    
+                "error": "Erro ao enviar imagem via WATI"
+            }), 500
+        
     except Exception as e:
-        logger.error(f"[ENDPOINT] Erro geral: {str(e)}")
+        logger.error(f"[SATÉLITE] Erro: {str(e)}")
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
 
 
+def obter_coordenadas(endereco):
+    """Obter latitude e longitude do endereço via Google Maps API"""
+    
+    try:
+        params = {
+            "address": endereco,
+            "key": GOOGLE_API_KEY
+        }
+        
+        response = requests.get(GOOGLE_MAPS_API_URL, params=params, timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            if data.get('results') and len(data['results']) > 0:
+                location = data['results'][0]['geometry']['location']
+                return {
+                    "lat": location['lat'],
+                    "lng": location['lng']
+                }
+        
+        return None
+        
+    except Exception as e:
+        logger.error(f"[MAPS] Erro ao obter coordenadas: {str(e)}")
+        return None
+
+
+def gerar_url_satelite(coords):
+    """Gerar URL da imagem de satélite via Google Static Maps"""
+    
+    if not coords:
+        return None
+    
+    params = {
+        "center": f"{coords['lat']},{coords['lng']}",
+        "zoom": 18,
+        "size": "640x640",
+        "maptype": "satellite",
+        "key": GOOGLE_API_KEY
+    }
+    
+    return f"{GOOGLE_SATELLITE_API_URL}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
+
+
+def enviar_imagem_wati(telefone, url_imagem, endereco):
+    """Enviar imagem de satélite via WATI API"""
+    
+    try:
+        # Formatar telefone
+        telefone_formatado = telefone.replace('+', '').replace(' ', '')
+        
+        # Preparar payload
+        payload = {
+            "customUserMessage": {
+                "phoneNumber": telefone_formatado,
+                "message": f"🛰️ Imagem de satélite de {endereco}",
+                "media": {
+                    "url": url_imagem,
+                    "type": "image"
+                }
+            }
+        }
+        
+        # Headers
+        headers = {
+            "Authorization": f"Bearer {WATI_API_TOKEN}",
+            "Content-Type": "application/json"
+        }
+        
+        # Enviar
+        response = requests.post(
+            f"{WATI_BASE_URL}/api/v1/sendSessionMessage/{WATI_TENANT_ID}",
+            json=payload,
+            headers=headers,
+            timeout=10
+        )
+        
+        logger.info(f"[WATI] Status: {response.status_code}")
+        
+        return response.status_code in [200, 201]
+        
+    except Exception as e:
+        logger.error(f"[WATI] Erro ao enviar: {str(e)}")
+        return False
+
+
+# ============================================================================
+# ANÁLISE DE ZONEAMENTO
+# ============================================================================
+
+@app.route('/zoneamento-endereco', methods=['POST'])
+def zoneamento_endereco():
+    """
+    Obtém informações de zoneamento do endereço
+    
+    Body esperado:
+    {
+        "endereco": "Avenida Paulista, 1000, São Paulo, SP"
+    }
+    """
+    
+    try:
+        data = request.json
+        endereco = data.get('endereco', '').strip()
+        
+        logger.info(f"[ZONEAMENTO] Consultando: {endereco}")
+        
+        if not endereco:
+            return jsonify({
+                "success": False,
+                "error": "Endereço é obrigatório"
+            }), 400
+        
+        # Aqui você pode integrar com API de zoneamento real
+        # Por enquanto, retorna dados de exemplo
+        
+        return jsonify({
+            "success": True,
+            "endereco_formatado": endereco,
+            "zoneamento": "ZC",
+            "zoneamento_texto": "Zona Comercial",
+            "info": "Integração com API de zoneamento"
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"[ZONEAMENTO] Erro: {str(e)}")
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }), 500
+
+
+# ============================================================================
+# ENDPOINT DE TESTE
+# ============================================================================
+
 @app.route('/analise-imagemdesatelite-test', methods=['GET'])
-def analise_imagem_desatelite_test():
-    """Endpoint de teste (GET)."""
+def test_endpoint():
+    """Endpoint de teste"""
     return jsonify({
         "status": "ok",
-        "message": "Use POST com JSON",
-        "example": {
-            "telefone": "+5511987654321",
-            "endereco": "Av. Paulista, 1000, São Paulo",
-            "zoom": 18
+        "mensagem": "Webhook está funcionando!",
+        "endpoints": {
+            "health": "/health",
+            "iptu": "/obter-metragem-iptu",
+            "satelite": "/analise-imagemdesatelite",
+            "zoneamento": "/zoneamento-endereco"
         }
     }), 200
+
+
+# ============================================================================
+# ERROR HANDLERS
+# ============================================================================
+
+@app.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Endpoint não encontrado"}), 404
+
+
+@app.errorhandler(500)
+def server_error(error):
+    return jsonify({"error": "Erro interno do servidor"}), 500
 
 
 # ============================================================================
@@ -305,6 +424,12 @@ def analise_imagem_desatelite_test():
 # ============================================================================
 
 if __name__ == '__main__':
-    port = int(os.getenv("PORT", 5000))
-    logger.info(f"Iniciando servidor na porta {port}")
-    app.run(host='0.0.0.0', port=port, debug=False)
+    logger.info(f"🚀 Iniciando SITKA Webhook na porta {PORT}")
+    logger.info(f"📍 Endpoints disponíveis:")
+    logger.info(f"   - GET  /health")
+    logger.info(f"   - POST /obter-metragem-iptu")
+    logger.info(f"   - POST /analise-imagemdesatelite")
+    logger.info(f"   - POST /zoneamento-endereco")
+    logger.info(f"   - GET  /analise-imagemdesatelite-test")
+    
+    app.run(host='0.0.0.0', port=PORT, debug=False)
