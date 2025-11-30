@@ -133,20 +133,38 @@ def obter_metragem_iptu():
                 "sucesso": False
             }), 400
         
-        # Consultar banco local
-        resultado = consultar_banco_local(endereco)
+        # ESTRATÉGIA 1: Consultar GeoSampa WFS
+        logger.info(f"[IPTU] Estratégia 1: GeoSampa WFS")
+        geocode = geocodificar_endereco(endereco)
         
-        if resultado and resultado.get('metragem'):
-            logger.info(f"[IPTU] ✅ Encontrado: {resultado['metragem']} m²")
+        if geocode:
+            resultado_geosampa = consultar_iptu_geosampa(geocode['lat'], geocode['lng'])
+            
+            if resultado_geosampa and resultado_geosampa.get('metragem'):
+                logger.info(f"[IPTU] ✅ GeoSampa: {resultado_geosampa['metragem']} m²")
+                return jsonify({
+                    "metragem": resultado_geosampa['metragem'],
+                    "fonte": "geosampa",
+                    "endereco": geocode['formatted'],
+                    "sql": resultado_geosampa.get('sql'),
+                    "sucesso": True
+                }), 200
+        
+        # ESTRATÉGIA 2: Consultar banco local (fallback)
+        logger.info(f"[IPTU] Estratégia 2: Banco local")
+        resultado_local = consultar_banco_local(endereco)
+        
+        if resultado_local and resultado_local.get('metragem'):
+            logger.info(f"[IPTU] ✅ Banco local: {resultado_local['metragem']} m²")
             return jsonify({
-                "metragem": resultado['metragem'],
+                "metragem": resultado_local['metragem'],
                 "fonte": "iptu_local",
-                "endereco": resultado.get('endereco'),
-                "sql": resultado.get('sql'),
+                "endereco": resultado_local.get('endereco'),
+                "sql": resultado_local.get('sql'),
                 "sucesso": True
             }), 200
         
-        logger.warning(f"[IPTU] Não encontrado: {endereco}")
+        logger.warning(f"[IPTU] Não encontrado em nenhuma fonte: {endereco}")
         return jsonify({
             "metragem": None,
             "fonte": "nao_encontrado",
@@ -164,9 +182,100 @@ def obter_metragem_iptu():
         }), 500
 
 
+def geocodificar_endereco(endereco):
+    """
+    Converte endereço em coordenadas usando Google Geocoding API
+    """
+    try:
+        if not endereco or not GOOGLE_API_KEY:
+            return None
+        
+        url = "https://maps.googleapis.com/maps/api/geocode/json"
+        params = {
+            "address": endereco,
+            "key": GOOGLE_API_KEY
+        }
+        
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        if data.get('status') == 'OK' and data.get('results'):
+            location = data['results'][0]['geometry']['location']
+            lat = location['lat']
+            lng = location['lng']
+            formatted = data['results'][0]['formatted_address']
+            
+            logger.info(f"[GEOCODE] ✅ {endereco} → ({lat}, {lng})")
+            return {"lat": lat, "lng": lng, "formatted": formatted}
+        
+        logger.warning(f"[GEOCODE] Não encontrado: {endereco}")
+        return None
+        
+    except Exception as e:
+        logger.error(f"[GEOCODE] Erro: {str(e)}")
+        return None
+
+
+def consultar_iptu_geosampa(lat, lng):
+    """
+    Consulta IPTU via WFS GeoSampa usando coordenadas
+    """
+    try:
+        # WFS do GeoSampa para lotes (IPTU)
+        wfs_url = "https://geosampa.prefeitura.sp.gov.br/geoserver/wfs"
+        
+        params = {
+            "service": "WFS",
+            "version": "2.0.0",
+            "request": "GetFeature",
+            "typeName": "LOTES",  # Camada de lotes do IPTU
+            "outputFormat": "application/json",
+            "cql_filter": f"INTERSECTS(geom, POINT({lng} {lat}))",
+            "srsName": "EPSG:4326"
+        }
+        
+        logger.info(f"[GEOSAMPA] Consultando WFS para ({lat}, {lng})")
+        
+        response = requests.get(wfs_url, params=params, timeout=30)
+        response.raise_for_status()
+        
+        data = response.json()
+        
+        if data.get('features') and len(data['features']) > 0:
+            feature = data['features'][0]
+            properties = feature.get('properties', {})
+            
+            # Extrair metragem (pode estar em diferentes campos)
+            metragem = (
+                properties.get('AREA_LOTE') or
+                properties.get('area_lote') or
+                properties.get('AREA') or
+                properties.get('area') or
+                None
+            )
+            
+            if metragem:
+                metragem = float(metragem)
+                logger.info(f"[GEOSAMPA] ✅ Metragem encontrada: {metragem} m²")
+                return {
+                    "metragem": metragem,
+                    "sql": properties.get('SQL') or properties.get('sql'),
+                    "properties": properties
+                }
+        
+        logger.warning(f"[GEOSAMPA] Nenhum lote encontrado")
+        return None
+        
+    except Exception as e:
+        logger.error(f"[GEOSAMPA] Erro: {str(e)}")
+        return None
+
+
 def consultar_banco_local(endereco):
     """
-    Consulta banco de dados local com busca fuzzy
+    Consulta banco de dados local com busca fuzzy (fallback)
     """
     try:
         if not endereco or not isinstance(endereco, str):
