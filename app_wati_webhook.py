@@ -36,7 +36,10 @@ GOOGLE_MAPS_API_URL = "https://maps.googleapis.com/maps/api/geocode/json"
 GOOGLE_SATELLITE_API_URL = "https://maps.googleapis.com/maps/api/staticmap"
 
 # BigQuery - Usar API REST (sem credenciais de serviço)
-BIGQUERY_API_URL = "https://www.googleapis.com/bigquery/v2/projects/basedosdados/datasets/sp_prefeitura_iptu/tables/iptu/data"
+BIGQUERY_PROJECT = "basedosdados"
+BIGQUERY_DATASET = "br_sp_saopaulo_geosampa_iptu"
+BIGQUERY_TABLE = "iptu"
+BIGQUERY_API_URL = f"https://www.googleapis.com/bigquery/v2/projects/{BIGQUERY_PROJECT}/datasets/{BIGQUERY_DATASET}/tables/{BIGQUERY_TABLE}/data"
 
 # ============================================================================
 # HEALTH CHECK
@@ -153,10 +156,10 @@ def consultar_iptu_bigquery(endereco, cidade):
             endereco,
             sql,
             bairro
-        FROM `basedosdados.sp_prefeitura_iptu.iptu`
+        FROM `basedosdados.br_sp_saopaulo_geosampa_iptu.iptu`
         WHERE 
             LOWER(endereco) LIKE LOWER('%{endereco_limpo}%')
-            AND ano = (SELECT MAX(ano) FROM `basedosdados.sp_prefeitura_iptu.iptu`)
+            AND ano = (SELECT MAX(ano) FROM `basedosdados.br_sp_saopaulo_geosampa_iptu.iptu`)
         LIMIT 1
         """
         
