@@ -400,16 +400,7 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel="", lat="", lng=""):
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
         # Legenda com endereço formatado do Google
         # Legenda com endereço formatado do Google e número do imóvel
-        if numero_imovel:
-            partes_endereco = endereco.split(',')
-            if len(partes_endereco) > 1:
-                rua = partes_endereco[0]
-                resto_endereco = ','.join(partes_endereco[1:])
-                legenda = f'{rua}, {numero_imovel},{resto_endereco}\n\nEste é o seu imóvel?'
-            else:
-                legenda = f'{endereco}, {numero_imovel}\n\nEste é o seu imóvel?'
-        else:
-            legenda = f'{endereco}\n\nEste é o seu imóvel?'
+        legenda = f'{endereco}\n\nEste é o seu imóvel?'
         
         data = {'caption': legenda}
         
