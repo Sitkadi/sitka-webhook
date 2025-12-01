@@ -366,7 +366,7 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
             "zoom": 18,
             "size": "600x600",
             "maptype": "satellite",
-            "markers": f"color:red|{endereco}",
+            "markers": f"color:red|{endereco_completo}",
             "key": GOOGLE_API_KEY
         }
         
@@ -395,9 +395,8 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
         # Incluir número do imóvel na legenda se disponível
-        legenda = f'Imagem de satélite: {endereco_completo}'
-        if numero_imovel:
-            legenda = f'Imagem de satélite: {endereco_completo}, {numero_imovel}'
+        legenda = 'Esse é o seu imóvel?'
+        
         data = {'caption': legenda}
         
         response_session = requests.post(url_session, headers=headers, files=files, data=data, timeout=30)
