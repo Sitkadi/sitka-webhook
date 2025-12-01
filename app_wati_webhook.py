@@ -395,9 +395,11 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
             logger.info(f"[SATELLITE] ✅ Imagem enviada!")
             return (True, url_completa)
         else:
-            logger.warning(f"[SATELLITE] ⚠️ Falha (status {response_session.status_code})")
+            logger.warning(f"[SATELLITE] ⚠️ Falha ao enviar via WATI (status {response_session.status_code})")
             logger.warning(f"[SATELLITE] Resposta: {response_session.text}")
-            return (False, "")
+            # Retornar a URL mesmo que falhe ao enviar para o WATI
+            # (a URL foi gerada corretamente)
+            return (True, url_completa)
         
     except Exception as e:
         logger.error(f"[SATELLITE] Erro: {str(e)}")
