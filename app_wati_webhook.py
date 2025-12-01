@@ -356,16 +356,14 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         
         # Baixar a imagem do Google Maps com zoom 18 e pino vermelho
         url = "https://maps.googleapis.com/maps/api/staticmap"
-        params = {
-            "center": endereco_completo,
-            "zoom": 18,
-            "size": "600x600",
-            "maptype": "satellite",
-            "markers": f"color:red|size:mid|{endereco_completo}",
-            "key": GOOGLE_API_KEY
-        }
         
-        response_img = requests.get(url, params=params, timeout=30)
+        # Construir a URL manualmente para garantir que o marker seja incluído
+        marker_param = f"color:red|size:mid|{endereco_completo}"
+        url_completa = f"{url}?center={endereco_completo}&zoom=18&size=600x600&maptype=satellite&markers={marker_param}&key={GOOGLE_API_KEY}"
+        
+        logger.info(f"[SATELLITE] URL: {url_completa[:100]}...")
+        
+        response_img = requests.get(url_completa, timeout=30)
         logger.info(f"[SATELLITE] Google Maps: {response_img.status_code}")
         
         response_img.raise_for_status()
