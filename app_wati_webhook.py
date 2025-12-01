@@ -338,7 +338,7 @@ def geocodificar_endereco_sp(endereco):
         return None
 
 
-def enviar_imagem_wati(telefone, endereco):
+def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
     """Envia imagem de satélite para o WhatsApp via WATI API"""
     try:
         phone = telefone.replace(" ", "").replace("-", "")
@@ -394,7 +394,11 @@ def enviar_imagem_wati(telefone, endereco):
         url_session = f"{WATI_BASE_URL}/{WATI_TENANT_ID}/api/v1/sendSessionFile/{phone}"
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
-        data = {'caption': f'Imagem de satélite: {endereco_completo}'}
+        # Incluir número do imóvel na legenda se disponível
+        legenda = f'Imagem de satélite: {endereco_completo}'
+        if numero_imovel:
+            legenda = f'Imagem de satélite: {endereco_completo}, {numero_imovel}'
+        data = {'caption': legenda}
         
         response_session = requests.post(url_session, headers=headers, files=files, data=data, timeout=30)
         
@@ -427,7 +431,8 @@ def analise_imagemdesatelite():
             logger.error("[SATELLITE] Telefone ou endereço não fornecido")
             return jsonify({"sucesso": False, "erro": "Telefone ou endereço não fornecido"}), 400
         
-        sucesso = enviar_imagem_wati(telefone, endereco)
+        numero_imovel = data.get('numero_imovel', '').strip()
+        sucesso = enviar_imagem_wati(telefone, endereco, numero_imovel)
         
         if sucesso:
             return jsonify({
