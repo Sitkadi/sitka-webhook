@@ -15,6 +15,9 @@ app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Variável global para armazenar a última URL de imagem gerada
+ultima_url_imagem = ""
+
 GOOGLE_API_KEY = os.getenv('GOOGLE_API_KEY', 'AIzaSyB56fOrhU0MUwtFp7s7qseKzMTml0rCMjY')
 WATI_API_TOKEN = os.getenv('WATI_API_TOKEN', '')
 WATI_TENANT_ID = os.getenv('WATI_TENANT_ID', '1047617')
@@ -340,6 +343,7 @@ def geocodificar_endereco_sp(endereco):
 
 def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
     """Envia imagem de satélite para o WhatsApp via WATI API"""
+    global ultima_url_imagem
     try:
         phone = telefone.replace(" ", "").replace("-", "")
         if not phone.startswith("+"):
@@ -360,6 +364,10 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         # Construir a URL manualmente para garantir que o marker seja incluído
         marker_param = f"color:red|size:mid|{endereco_completo}"
         url_completa = f"{url}?center={endereco_completo}&zoom=18&size=600x600&maptype=satellite&markers={marker_param}&key={GOOGLE_API_KEY}"
+        
+        # Armazenar a URL para retornar no endpoint
+        global ultima_url_imagem
+        ultima_url_imagem = url_completa
         
         logger.info(f"[SATELLITE] URL: {url_completa[:100]}...")
         
@@ -419,10 +427,11 @@ def analise_imagemdesatelite():
         sucesso = enviar_imagem_wati(telefone, endereco, numero_imovel)
         
         if sucesso:
+            global ultima_url_imagem
             return jsonify({
                 "sucesso": True,
                 "mensagem": "Imagem de satélite enviada com sucesso",
-                "imagemdesatelite_url": f"https://maps.googleapis.com/maps/api/staticmap?center={endereco}&zoom=18&size=600x600&maptype=satellite&key={GOOGLE_API_KEY}"
+                "imagemdesatelite_url": ultima_url_imagem
             }), 200
         else:
             return jsonify({
