@@ -354,32 +354,19 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
             logger.error(f"[SATELLITE] Endereço fora de São Paulo")
             return False
         
-        # Bounding box de São Paulo (lat/lng)
-        # SW: -23.8245, -46.8134 | NE: -23.4273, -46.3569
-        bounds = "23.8245,-46.8134|23.4273,-46.3569"
-        
-        # Baixar a imagem do Google Maps
+        # Baixar a imagem do Google Maps com zoom 18 e pino vermelho
         url = "https://maps.googleapis.com/maps/api/staticmap"
         params = {
             "center": endereco_completo,
-            "bounds": bounds,
             "zoom": 18,
             "size": "600x600",
             "maptype": "satellite",
-            "markers": f"color:red|{endereco_completo}",
+            "markers": f"color:red|size:mid|{endereco_completo}",
             "key": GOOGLE_API_KEY
         }
         
-        # Primeiro tentar com bounding box
         response_img = requests.get(url, params=params, timeout=30)
-        logger.info(f"[SATELLITE] Google Maps (com bounds): {response_img.status_code}")
-        
-        # Se falhar, tentar sem bounding box
-        if response_img.status_code != 200:
-            logger.warning(f"[SATELLITE] Falha com bounds, tentando sem...")
-            del params['bounds']
-            response_img = requests.get(url, params=params, timeout=30)
-            logger.info(f"[SATELLITE] Google Maps (sem bounds): {response_img.status_code}")
+        logger.info(f"[SATELLITE] Google Maps: {response_img.status_code}")
         
         response_img.raise_for_status()
         
@@ -394,8 +381,8 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         url_session = f"{WATI_BASE_URL}/{WATI_TENANT_ID}/api/v1/sendSessionFile/{phone}"
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
-        # Incluir número do imóvel na legenda se disponível
-        legenda = 'Esse é o seu imóvel?'
+        # Legenda com endereço formatado do Google
+        legenda = f'{endereco_completo}\n\nEste é o seu imóvel?'
         
         data = {'caption': legenda}
         
