@@ -343,7 +343,6 @@ def geocodificar_endereco_sp(endereco):
 
 def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
     """Envia imagem de satélite para o WhatsApp via WATI API"""
-    global ultima_url_imagem
     try:
         phone = telefone.replace(" ", "").replace("-", "")
         if not phone.startswith("+"):
@@ -365,10 +364,6 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         marker_param = f"color:red|size:mid|{endereco_completo}"
         url_completa = f"{url}?center={endereco_completo}&zoom=18&size=600x600&maptype=satellite&markers={marker_param}&key={GOOGLE_API_KEY}"
         
-        # Armazenar a URL para retornar no endpoint
-        global ultima_url_imagem
-        ultima_url_imagem = url_completa
-        
         logger.info(f"[SATELLITE] URL: {url_completa[:100]}...")
         
         response_img = requests.get(url_completa, timeout=30)
@@ -378,7 +373,7 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         
         if not response_img.headers.get('content-type', '').startswith('image'):
             logger.error("[SATELLITE] Resposta não é uma imagem")
-            return False
+            return (False, "")
         
         # Enviar a imagem via WATI API
         logger.info(f"[SATELLITE] Enviando para {phone}")
@@ -398,15 +393,15 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         
         if response_session.status_code in [200, 201]:
             logger.info(f"[SATELLITE] ✅ Imagem enviada!")
-            return True
+            return (True, url_completa)
         else:
             logger.warning(f"[SATELLITE] ⚠️ Falha (status {response_session.status_code})")
             logger.warning(f"[SATELLITE] Resposta: {response_session.text}")
-            return False
+            return (False, "")
         
     except Exception as e:
         logger.error(f"[SATELLITE] Erro: {str(e)}")
-        return False
+        return (False, "")
 
 
 @app.route('/analise-imagemdesatelite', methods=['POST'])
@@ -424,14 +419,13 @@ def analise_imagemdesatelite():
             return jsonify({"sucesso": False, "erro": "Telefone ou endereço não fornecido"}), 400
         
         numero_imovel = data.get('numero_imovel', '').strip()
-        sucesso = enviar_imagem_wati(telefone, endereco, numero_imovel)
+        sucesso, url_imagem = enviar_imagem_wati(telefone, endereco, numero_imovel)
         
         if sucesso:
-            global ultima_url_imagem
             return jsonify({
                 "sucesso": True,
                 "mensagem": "Imagem de satélite enviada com sucesso",
-                "imagemdesatelite_url": ultima_url_imagem
+                "imagemdesatelite_url": url_imagem
             }), 200
         else:
             return jsonify({
