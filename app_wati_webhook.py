@@ -399,7 +399,11 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel="", lat="", lng=""):
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
         # Legenda com endereço formatado do Google
-        legenda = f'{endereco_completo}\n\nEste é o seu imóvel?'
+        # Legenda com endereço formatado do Google e número do imóvel
+        if numero_imovel:
+            legenda = f'{endereco_completo}, {numero_imovel}\n\nEste é o seu imóvel?'
+        else:
+            legenda = f'{endereco_completo}\n\nEste é o seu imóvel?'
         
         data = {'caption': legenda}
         
