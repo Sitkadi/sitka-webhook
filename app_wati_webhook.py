@@ -341,7 +341,7 @@ def geocodificar_endereco_sp(endereco):
         return None
 
 
-def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
+def enviar_imagem_wati(telefone, endereco, numero_imovel="", lat="", lng=""):
     """Envia imagem de satélite para o WhatsApp via WATI API"""
     try:
         phone = telefone.replace(" ", "").replace("-", "")
@@ -360,9 +360,25 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel=""):
         # Baixar a imagem do Google Maps com zoom 18 e pino vermelho
         url = "https://maps.googleapis.com/maps/api/staticmap"
         
+        # Usar coordenadas no marker se disponíveis, senão usar endereço
+        if lat and lng:
+            try:
+                lat_f = float(lat)
+                lng_f = float(lng)
+                marker_location = f"{lat_f},{lng_f}"
+                center_location = f"{lat_f},{lng_f}"
+                logger.info(f"[SATELLITE] Usando coordenadas: {marker_location}")
+            except (ValueError, TypeError):
+                marker_location = endereco_completo
+                center_location = endereco_completo
+                logger.warning(f"[SATELLITE] Coordenadas inválidas, usando endereço")
+        else:
+            marker_location = endereco_completo
+            center_location = endereco_completo
+        
         # Construir a URL manualmente para garantir que o marker seja incluído
-        marker_param = f"color:red|size:mid|{endereco_completo}"
-        url_completa = f"{url}?center={endereco_completo}&zoom=18&size=600x600&maptype=satellite&markers={marker_param}&key={GOOGLE_API_KEY}"
+        marker_param = f"color:red|size:mid|{marker_location}"
+        url_completa = f"{url}?center={center_location}&zoom=18&size=600x600&maptype=satellite&markers={marker_param}&key={GOOGLE_API_KEY}"
         
         logger.info(f"[SATELLITE] URL: {url_completa[:100]}...")
         
@@ -421,7 +437,9 @@ def analise_imagemdesatelite():
             return jsonify({"sucesso": False, "erro": "Telefone ou endereço não fornecido"}), 400
         
         numero_imovel = data.get('numero_imovel', '').strip()
-        sucesso, url_imagem = enviar_imagem_wati(telefone, endereco, numero_imovel)
+        lat = data.get('lat', '').strip()
+        lng = data.get('lng', '').strip()
+        sucesso, url_imagem = enviar_imagem_wati(telefone, endereco, numero_imovel, lat, lng)
         
         if sucesso:
             return jsonify({
