@@ -398,9 +398,8 @@ def enviar_imagem_wati(telefone, endereco, numero_imovel="", lat="", lng=""):
         url_session = f"{WATI_BASE_URL}/{WATI_TENANT_ID}/api/v1/sendSessionFile/{phone}"
         
         files = {'file': ('satellite.png', io.BytesIO(response_img.content), 'image/png')}
-        # Legenda com endereço formatado do Google
-        # Legenda com endereço formatado do Google e número do imóvel
-        legenda = f'{endereco}\n\nEste é o seu imóvel?'
+        # Legenda com apenas o endereço formatado do Google
+        legenda = f'{endereco}'
         
         data = {'caption': legenda}
         
