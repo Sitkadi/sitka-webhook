@@ -445,8 +445,7 @@ def analise_imagemdesatelite():
         if sucesso:
             return jsonify({
                 "sucesso": True,
-                "mensagem": "Imagem de satélite enviada com sucesso",
-                "imagemdesatelite_url": url_imagem
+                "mensagem": "Imagem de satélite enviada com sucesso"
             }), 200
         else:
             return jsonify({
